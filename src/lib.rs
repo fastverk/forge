@@ -1,0 +1,143 @@
+//! Generic forge contract + GitHub/GitLab adapters.
+//!
+//! [`Forge`] is the set of operations a cross-repo cascade needs from a code
+//! host: read the default branch + a file, create a branch, commit, open a
+//! change (PR/MR), enable auto-merge, poll the pipeline, merge, and read the
+//! change's state. The DTOs ([`RepoRef`], [`ChangeRef`], [`FileBlob`],
+//! [`CiStatus`], [`ChangeState`]) are proto messages (package `forge.v1`); the
+//! generated gRPC `ForgeService` is the same contract for a future
+//! forge-gateway daemon. In-process consumers (the wave engine) use the async
+//! [`Forge`] trait directly.
+
+use async_trait::async_trait;
+
+pub mod pb {
+    //! Generated `forge.v1` proto types + gRPC service stubs.
+    tonic::include_proto!("forge.v1");
+}
+
+pub mod github;
+pub mod gitlab;
+
+pub use pb::{ChangeRef, ChangeState, CiStatus, FileBlob, Forge as ForgeKind, RepoRef};
+
+/// A forge operation error. A concrete type (not `anyhow`) so the public `Forge`
+/// API doesn't leak `anyhow` — which also lets consumers in a *different* crate
+/// universe (a separate Bazel module) implement + call the trait without the
+/// two `anyhow` instances colliding. Adapters build it from their internal
+/// `anyhow` errors via `From`; consumers turn it back into their own error type
+/// (it's a `std::error::Error`, so `anyhow`'s blanket `?` just works).
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct ForgeError(String);
+
+impl ForgeError {
+    /// A `ForgeError` from any displayable message.
+    pub fn msg(m: impl std::fmt::Display) -> Self {
+        Self(m.to_string())
+    }
+}
+
+impl From<anyhow::Error> for ForgeError {
+    fn from(e: anyhow::Error) -> Self {
+        Self(format!("{e:#}"))
+    }
+}
+
+/// `Result` for [`Forge`] operations.
+pub type ForgeResult<T> = Result<T, ForgeError>;
+
+/// Outcome of [`Forge::create_branch`] — idempotent over an existing branch.
+#[derive(Debug, Clone)]
+pub struct BranchOutcome {
+    pub created: bool,
+    pub already_existed: bool,
+}
+
+/// Outcome of [`Forge::open_change`] — idempotent over an existing open change.
+#[derive(Debug, Clone)]
+pub struct OpenedChange {
+    pub change: ChangeRef,
+    pub already_existed: bool,
+}
+
+/// A change's pipeline status + identity.
+#[derive(Debug, Clone)]
+pub struct PipelineStatus {
+    pub status: CiStatus,
+    pub pipeline_id: String,
+    pub url: String,
+}
+
+/// Convenience: `owner/name` for a repo (owner may be a nested group path).
+#[must_use]
+pub fn repo_slug(repo: &RepoRef) -> String {
+    if repo.owner.is_empty() {
+        repo.name.clone()
+    } else {
+        format!("{}/{}", repo.owner, repo.name)
+    }
+}
+
+/// The operations a forge (GitHub, GitLab, …) provides to a cascade. All
+/// methods are idempotent where noted, so a resuming reconcile loop can call
+/// them repeatedly without creating duplicates.
+#[async_trait]
+pub trait Forge: Send + Sync {
+    /// Which forge this adapter targets.
+    fn kind(&self) -> ForgeKind;
+
+    /// The repo's default branch (e.g. "main").
+    async fn default_branch(&self, repo: &RepoRef) -> ForgeResult<String>;
+
+    /// Read a file at `r#ref` (empty = default branch). `Ok(None)` = absent.
+    async fn read_file(&self, repo: &RepoRef, path: &str, r#ref: &str) -> ForgeResult<Option<FileBlob>>;
+
+    /// Create branch `name` from `from_ref` (a branch name or sha). Idempotent:
+    /// an existing branch returns `already_existed = true`, not an error.
+    async fn create_branch(
+        &self,
+        repo: &RepoRef,
+        name: &str,
+        from_ref: &str,
+    ) -> ForgeResult<BranchOutcome>;
+
+    /// Commit `content` to `path` on `branch`. `blob_sha` is the opaque id from
+    /// [`Forge::read_file`] (GitHub blob sha / GitLab last_commit_id), required
+    /// to update an existing file. Returns the commit sha when the forge
+    /// reports it (may be empty otherwise).
+    async fn commit_file(
+        &self,
+        repo: &RepoRef,
+        branch: &str,
+        path: &str,
+        content: &str,
+        blob_sha: &str,
+        message: &str,
+    ) -> ForgeResult<String>;
+
+    /// Open a PR/MR from `head` into `base`. Idempotent: an existing open
+    /// change for `head` is returned with `already_existed = true`.
+    async fn open_change(
+        &self,
+        repo: &RepoRef,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        remove_source_branch: bool,
+    ) -> ForgeResult<OpenedChange>;
+
+    /// Enable auto-merge / merge-when-pipeline-succeeds. Returns whether it was
+    /// enabled (false if the forge merged immediately or it's unavailable).
+    async fn enable_auto_merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<bool>;
+
+    /// The pipeline status for the change's head.
+    async fn pipeline_status(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<PipelineStatus>;
+
+    /// Merge the change now. Returns the merge commit sha.
+    async fn merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<String>;
+
+    /// The change's open/merged/closed state.
+    async fn change_state(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<ChangeState>;
+}

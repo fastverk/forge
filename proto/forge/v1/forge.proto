@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+// Generic forge contract.
+//
+// The operations a code-hosting "forge" (GitHub, GitLab, …) provides that a
+// cross-repo cascade needs: read a repo's default branch + a file, create a
+// branch, commit a file, open a change (PR/MR), enable auto-merge, poll the
+// change's pipeline, merge, and read the change's state. Modeled ONCE here so
+// GitHub and GitLab adapters satisfy a single contract and any tool reuses it
+// (DTOs are protos by convention).
+//
+// In-process consumers (e.g. the wave engine) use a hand-written async `Forge`
+// trait whose methods take/return these message types; the gRPC `ForgeService`
+// is the same contract for a future forge-gateway daemon.
+
+package forge.v1;
+
+// Which forge a repo lives on.
+enum Forge {
+  FORGE_UNSPECIFIED = 0;
+  FORGE_GITHUB = 1;
+  FORGE_GITLAB = 2;
+}
+
+// A repository on a forge. `owner` is the GitHub org/user or the GitLab
+// (possibly nested) group path; `name` is the repo/project slug; `host` is the
+// instance ("github.com", "gitlab.savvifi.com" — empty = the forge default).
+message RepoRef {
+  Forge forge = 1;
+  string host = 2;
+  string owner = 3;
+  string name = 4;
+}
+
+// A change request: a GitHub pull request or a GitLab merge request.
+message ChangeRef {
+  // GitHub PR number / GitLab MR iid.
+  uint64 number = 1;
+  // Web URL.
+  string url = 2;
+  // Head/source branch.
+  string branch = 3;
+}
+
+// A file's contents + the opaque id needed to update it.
+message FileBlob {
+  string path = 1;
+  // Decoded UTF-8 file contents.
+  string content = 2;
+  // Opaque id required to update the file: GitHub blob sha / GitLab
+  // last_commit_id. Echoed back on CommitFile.
+  string blob_sha = 3;
+}
+
+// CI/pipeline status for a change's head.
+enum CiStatus {
+  CI_STATUS_UNSPECIFIED = 0;
+  CI_STATUS_NONE = 1;     // no pipeline for this change
+  CI_STATUS_PENDING = 2;
+  CI_STATUS_RUNNING = 3;
+  CI_STATUS_SUCCESS = 4;
+  CI_STATUS_FAILED = 5;
+  CI_STATUS_CANCELED = 6;
+}
+
+enum ChangeState {
+  CHANGE_STATE_UNSPECIFIED = 0;
+  CHANGE_STATE_OPEN = 1;
+  CHANGE_STATE_MERGED = 2;
+  CHANGE_STATE_CLOSED = 3;
+}
+
+// ── request / response messages ───────────────────────────────────────
+
+message GetDefaultBranchRequest { RepoRef repo = 1; }
+message GetDefaultBranchResponse { string branch = 1; }
+
+message ReadFileRequest {
+  RepoRef repo = 1;
+  string path = 2;
+  // Git ref to read from (branch/tag/sha); empty = default branch.
+  string ref = 3;
+}
+message ReadFileResponse {
+  FileBlob blob = 1;
+  bool found = 2;
+}
+
+message CreateBranchRequest {
+  RepoRef repo = 1;
+  string name = 2;
+  string from_sha = 3;
+}
+message CreateBranchResponse {
+  bool created = 1;
+  // True when the branch already existed (idempotent re-run); not an error.
+  bool already_existed = 2;
+}
+
+message CommitFileRequest {
+  RepoRef repo = 1;
+  string branch = 2;
+  string path = 3;
+  string content = 4;
+  // From ReadFile — required to update an existing file.
+  string blob_sha = 5;
+  string message = 6;
+}
+message CommitFileResponse { string commit_sha = 1; }
+
+message OpenChangeRequest {
+  RepoRef repo = 1;
+  string head = 2;   // source branch
+  string base = 3;   // target branch
+  string title = 4;
+  string body = 5;
+  bool remove_source_branch = 6;
+}
+message OpenChangeResponse {
+  ChangeRef change = 1;
+  // True when an open change for `head` already existed; not an error.
+  bool already_existed = 2;
+}
+
+message EnableAutoMergeRequest {
+  RepoRef repo = 1;
+  ChangeRef change = 2;
+}
+message EnableAutoMergeResponse { bool enabled = 1; }
+
+message PipelineStatusRequest {
+  RepoRef repo = 1;
+  ChangeRef change = 2;
+}
+message PipelineStatusResponse {
+  CiStatus status = 1;
+  string pipeline_id = 2;
+  string pipeline_url = 3;
+}
+
+message MergeRequest {
+  RepoRef repo = 1;
+  ChangeRef change = 2;
+}
+message MergeResponse { string merge_commit_sha = 1; }
+
+message GetChangeStateRequest {
+  RepoRef repo = 1;
+  ChangeRef change = 2;
+}
+message GetChangeStateResponse {
+  ChangeState state = 1;
+  string merge_commit_sha = 2;
+}
+
+// The generic forge service. GitHub + GitLab adapters implement these.
+service ForgeService {
+  rpc GetDefaultBranch(GetDefaultBranchRequest) returns (GetDefaultBranchResponse);
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  rpc CreateBranch(CreateBranchRequest) returns (CreateBranchResponse);
+  rpc CommitFile(CommitFileRequest) returns (CommitFileResponse);
+  rpc OpenChange(OpenChangeRequest) returns (OpenChangeResponse);
+  rpc EnableAutoMerge(EnableAutoMergeRequest) returns (EnableAutoMergeResponse);
+  rpc PipelineStatus(PipelineStatusRequest) returns (PipelineStatusResponse);
+  rpc Merge(MergeRequest) returns (MergeResponse);
+  rpc GetChangeState(GetChangeStateRequest) returns (GetChangeStateResponse);
+}

@@ -1,0 +1,37 @@
+[package]
+name = "fastverk-forge"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.95.0"
+license = "MIT"
+repository = "https://github.com/fastverk/forge"
+description = "Generic forge contract (ForgeService) + GitHub/GitLab adapters."
+
+[lib]
+name = "forge"
+path = "src/lib.rs"
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+tokio = { version = "1.40", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+octocrab = "0.41"
+http = "1"
+base64 = "0.22"
+urlencoding = "2"
+tracing = "0.1"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[lints.rust]
+unsafe_code = "forbid"
