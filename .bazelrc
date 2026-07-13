@@ -23,4 +23,12 @@ build:rbe --remote_timeout=600
 build:rbe --strategy=remote,local
 build:rbe --remote_local_fallback
 
+# protobuf's upb generator uses the `linkarr` encapsulation-symbol pattern
+# (__start_/__stop_linkarr_upb_AllExts); lld's default --gc-sections drops the
+# empty section and leaves those symbols undefined when linking the protoc-gen-upb
+# host tools. zig's cc driver rejects the targeted `-z nostart-stop-gc`, so disable
+# section GC on both the exec (host) and target links. Mirrors botnoc/agents.
+build:rbe --host_linkopt=-Wl,--no-gc-sections
+build:rbe --linkopt=-Wl,--no-gc-sections
+
 try-import %workspace%/user.bazelrc
