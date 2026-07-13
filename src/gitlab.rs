@@ -219,24 +219,37 @@ impl Forge for GitLabForge {
         blob_sha: &str,
         message: &str,
     ) -> ForgeResult<String> {
-        let url = format!("{}/repository/files/{}", self.base(repo), urlencoding::encode(path));
-        let mut body = json!({
+        // Use the COMMITS API (not the single-file PUT): it (a) picks create-vs-update
+        // via the action, so a NEW file works — the single-file PUT is update-only and
+        // 400s "A file with this name doesn't exist"; and (b) returns the created commit
+        // {id}, which the caller needs as the exact sha to build + arm the merge status
+        // on. Empty blob_sha ⇒ the file is new ⇒ "create"; else "update".
+        let url = format!("{}/repository/commits", self.base(repo));
+        let action = if blob_sha.is_empty() { "create" } else { "update" };
+        let body = json!({
             "branch": branch,
-            "content": content,
             "commit_message": message,
+            "actions": [{
+                "action": action,
+                "file_path": path,
+                "content": content,
+            }],
         });
-        if !blob_sha.is_empty() {
-            body["last_commit_id"] = json!(blob_sha);
-        }
-        let resp = self.send(self.http.put(url).json(&body)).await?;
+        let resp = self.send(self.http.post(&url).json(&body)).await?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
             return Err(ForgeError::msg(format!("gitlab commit_file {status}: {}", text.trim())));
         }
-        // GitLab's files PUT returns {file_path, branch} (no commit sha);
-        // the merge commit is what downstream cares about, so return empty.
-        Ok(String::new())
+        // The commits API returns the new commit object: {"id": "<sha>", ...}.
+        let commit: serde_json::Value =
+            serde_json::from_str(&text).context("parse gitlab commit response")?;
+        let sha = commit
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok(sha)
     }
 
     async fn open_change(
