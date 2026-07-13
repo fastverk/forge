@@ -1,0 +1,26 @@
+replicaCount: 1
+
+# The aion-dev EKS cluster pulls images from the aion-dev PRIVATE ECR. The
+# image is built + pushed from this repo's //:forge-gateway_push target.
+image:
+  repository: 042825952740.dkr.ecr.us-east-1.amazonaws.com/forge-gateway
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# gRPC bind port (forge.v1.ForgeService). Clients dial
+# http://forge-gateway.<ns>.svc:<grpcPort>.
+grpcPort: 50055
+
+logLevel: "forge=info,info"
+
+# ClusterIP: consumers (the console forge plugin, wave) reach it over Service DNS.
+service:
+  type: ClusterIP
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

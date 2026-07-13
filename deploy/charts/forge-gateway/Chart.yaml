@@ -1,0 +1,13 @@
+apiVersion: v2
+name: forge-gateway
+description: >-
+  forge-gateway — the gRPC daemon serving forge.v1.ForgeService over the forge
+  crate's GitHub/GitLab adapters. The single source of truth for forge write ops
+  (open MR/PR, arm auto-merge, merge, pipeline status). Holds NO forge credential
+  of its own: each caller's identity travels in request metadata
+  (x-fastverk-gitlab-token/-host, x-fastverk-github-token), so every op runs as
+  the caller. Consumed in-cluster by the console forge plugin (the MR write MCP
+  tools) and by the wave cascade engine. ClusterIP — reached over Service DNS.
+type: application
+version: 0.1.0
+appVersion: "latest"

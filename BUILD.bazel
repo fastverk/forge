@@ -4,9 +4,10 @@ Single crate at the repo root. The proto is compiled by build.rs (tonic-build)
 under a cargo_build_script; protoc comes from @protobuf. `@forge//:forge` is the
 rust_library other fastverk modules (e.g. wave) depend on."""
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@crates//:defs.bzl", "all_crate_deps")
+load("//tools/oci:defs.bzl", "rust_service_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -26,11 +27,34 @@ cargo_build_script(
 
 rust_library(
     name = "forge",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    ),
     crate_root = "src/lib.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
     deps = [":build_script"] + all_crate_deps(normal = True),
+)
+
+# The forge-gateway daemon: serves forge.v1.ForgeService over the Forge trait
+# (GitLab/GitHub adapters), per-request identity from gRPC metadata. Consumed by
+# the wave cascade engine and the console's agent-callable MCP write tools.
+rust_binary(
+    name = "forge-gateway",
+    srcs = ["src/bin/forge-gateway.rs"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [":forge"] + all_crate_deps(normal = True),
+)
+
+# The forge-gateway OCI image (distroless/cc + the binary). Built on RBE; the
+# build-runner pushes //:forge-gateway-image_push to $ECR/forge-gateway:<sha>.
+rust_service_image(
+    name = "forge-gateway-image",
+    binary = ":forge-gateway",
+    exposed_ports = ["50055/tcp"],
+    repository = "042825952740.dkr.ecr.us-east-1.amazonaws.com/forge-gateway",
 )
 
 rust_test(

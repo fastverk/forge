@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "forge-gateway.fullname" . }}
+  labels:
+    {{- include "forge-gateway.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "forge-gateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "forge-gateway.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: forge-gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.grpcPort }}
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.logLevel | quote }}
+            # Bind address (distinct from the FORGE_GATEWAY_ADDR clients dial).
+            - name: FORGE_GATEWAY_BIND
+              value: {{ printf "0.0.0.0:%v" .Values.grpcPort | quote }}
+          # No HTTP surface — probe the gRPC port at the TCP level.
+          readinessProbe:
+            tcpSocket: { port: grpc }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: grpc }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

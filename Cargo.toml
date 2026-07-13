@@ -1,3 +1,8 @@
+# Standalone crate (built by Bazel; this table keeps a bare `cargo` invocation
+# from being captured by an ancestor workspace — same as the sibling fvkit/wave
+# repos).
+[workspace]
+
 [package]
 name = "fastverk-forge"
 version = "0.0.1"
@@ -29,6 +34,7 @@ http = "1"
 base64 = "0.22"
 urlencoding = "2"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-build = "0.12"

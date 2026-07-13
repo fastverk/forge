@@ -9,4 +9,18 @@ common --action_env=HOME
 test --test_output=errors
 test --test_summary=terse
 
+# --config=rbe: build the forge-gateway OCI image on the fastverk buildbarn RBE
+# (the build-runner injects this + the executor endpoint). The container-image
+# exec property MUST match RbeCluster.spec.worker; //tools/oci:rbe is the exec
+# platform (zig cc + rustc resolve linux/amd64). Mirrors botnoc/agents.
+build:rbe --remote_default_exec_properties=OSFamily=linux
+build:rbe --remote_default_exec_properties=container-image=docker://ghcr.io/catthehacker/ubuntu:act-22.04
+build:rbe --extra_execution_platforms=//tools/oci:rbe
+build:rbe --host_platform=//tools/oci:rbe
+build:rbe --platforms=//tools/oci:linux_amd64
+build:rbe --jobs=64
+build:rbe --remote_timeout=600
+build:rbe --strategy=remote,local
+build:rbe --remote_local_fallback
+
 try-import %workspace%/user.bazelrc

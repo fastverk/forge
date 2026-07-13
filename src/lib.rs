@@ -16,6 +16,7 @@ pub mod pb {
     tonic::include_proto!("forge.v1");
 }
 
+pub mod gateway;
 pub mod github;
 pub mod gitlab;
 
