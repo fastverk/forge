@@ -4,9 +4,9 @@ Single crate at the repo root. The proto is compiled by build.rs (tonic-build)
 under a cargo_build_script; protoc comes from @protobuf. `@forge//:forge` is the
 rust_library other fastverk modules (e.g. wave) depend on."""
 
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
-load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("//tools/oci:defs.bzl", "rust_service_image")
 
 package(default_visibility = ["//visibility:public"])
@@ -16,11 +16,11 @@ exports_files(["MODULE.bazel"])
 cargo_build_script(
     name = "build_script",
     srcs = ["build.rs"],
-    data = ["//proto/forge/v1:forge.proto"],
-    edition = "2021",
     build_script_env = {
         "PROTOC": "$(execpath @protobuf//:protoc)",
     },
+    data = ["//proto/forge/v1:forge.proto"],
+    edition = "2021",
     tools = ["@protobuf//:protoc"],
     deps = all_crate_deps(build = True),
 )

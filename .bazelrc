@@ -1,5 +1,9 @@
 common --enable_bzlmod
 common --experimental_isolated_extension_usages
+# Auto-apply the `build:linux` / `build:macos` config for the HOST OS — so the
+# linux-only linkopts below land on a plain `bazel test //...` (CI, non-RBE)
+# without touching macOS native builds.
+common --enable_platform_specific_config
 
 common --registry=https://registry.fastverk.com/
 common --registry=https://bcr.bazel.build/
@@ -30,5 +34,13 @@ build:rbe --remote_local_fallback
 # section GC on both the exec (host) and target links. Mirrors botnoc/agents.
 build:rbe --host_linkopt=-Wl,--no-gc-sections
 build:rbe --linkopt=-Wl,--no-gc-sections
+
+# Same upb/linkarr fix for a plain host `bazel test //...` on LINUX (CI ubuntu,
+# which resolves the hermetic zig cc for the protoc-gen-upb host tools). Scoped
+# to linux via --enable_platform_specific_config: macOS builds with the native
+# toolchain (Apple ld rejects --no-gc-sections and has no upb issue), so it must
+# NOT receive these.
+build:linux --host_linkopt=-Wl,--no-gc-sections
+build:linux --linkopt=-Wl,--no-gc-sections
 
 try-import %workspace%/user.bazelrc

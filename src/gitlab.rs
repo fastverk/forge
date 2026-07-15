@@ -11,9 +11,11 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    BranchOutcome, ChangeRef, ChangeState, CiStatus, FileBlob, Forge, ForgeKind, OpenedChange,
-    ForgeError, ForgeResult, PipelineStatus, RepoRef,
+    default_trigger_events, BranchOutcome, ChangeRef, ChangeState, CiStatus, EnsuredTrigger,
+    FileBlob, Forge, ForgeError, ForgeKind, ForgeResult, OpenedChange, PipelineStatus, RepoRef,
+    Trigger,
 };
+use serde_json::Value;
 
 /// A GitLab adapter bound to one host + token.
 pub struct GitLabForge {
@@ -366,6 +368,102 @@ impl Forge for GitLabForge {
             "closed" => ChangeState::Closed,
             _ => ChangeState::Open,
         })
+    }
+
+    async fn list_triggers(&self, repo: &RepoRef) -> ForgeResult<Vec<Trigger>> {
+        let url = format!("{}/hooks", self.base(repo));
+        let hooks: Vec<Value> = self.json(self.http.get(url)).await?;
+        Ok(hooks.iter().map(gl_hook_to_trigger).collect())
+    }
+
+    async fn ensure_trigger(
+        &self,
+        repo: &RepoRef,
+        url: &str,
+        events: &[String],
+        secret: &str,
+    ) -> ForgeResult<EnsuredTrigger> {
+        // Idempotent: a project hook already delivering to `url` is returned.
+        if let Some(trigger) = self
+            .list_triggers(repo)
+            .await?
+            .into_iter()
+            .find(|t| t.url == url)
+        {
+            return Ok(EnsuredTrigger { trigger, created: false });
+        }
+        let want = if events.is_empty() {
+            default_trigger_events()
+        } else {
+            events.to_vec()
+        };
+        // GitLab models subscriptions as booleans, not an event list. Map the
+        // normalized names onto the two flags a build trigger needs.
+        let mut payload = serde_json::Map::new();
+        payload.insert("url".into(), json!(url));
+        payload.insert("push_events".into(), json!(want.iter().any(|e| e == "push")));
+        payload.insert(
+            "merge_requests_events".into(),
+            json!(want.iter().any(|e| e == "pull_request" || e == "merge_request")),
+        );
+        payload.insert("enable_ssl_verification".into(), json!(true));
+        if !secret.is_empty() {
+            payload.insert("token".into(), json!(secret));
+        }
+        let create_url = format!("{}/hooks", self.base(repo));
+        let created: Value = self
+            .json(self.http.post(create_url).json(&Value::Object(payload)))
+            .await?;
+        Ok(EnsuredTrigger {
+            trigger: gl_hook_to_trigger(&created),
+            created: true,
+        })
+    }
+}
+
+/// Map a GitLab project-hook JSON object to a normalized [`Trigger`], folding
+/// GitLab's boolean flags back into the GitHub-style event vocabulary. GitLab
+/// hooks have no "active" flag — presence implies active.
+fn gl_hook_to_trigger(h: &Value) -> Trigger {
+    let mut events = Vec::new();
+    if h.get("push_events").and_then(Value::as_bool).unwrap_or(false) {
+        events.push("push".to_string());
+    }
+    if h.get("merge_requests_events").and_then(Value::as_bool).unwrap_or(false) {
+        events.push("pull_request".to_string());
+    }
+    Trigger {
+        id: h.get("id").map(ToString::to_string).unwrap_or_default(),
+        url: h.get("url").and_then(Value::as_str).unwrap_or_default().to_string(),
+        events,
+        active: true,
+    }
+}
+
+#[cfg(test)]
+mod trigger_tests {
+    use super::*;
+
+    #[test]
+    fn maps_gitlab_hook_to_trigger() {
+        let hook = json!({
+            "id": 77,
+            "url": "https://hooks.fastverk.com/webhook",
+            "push_events": true,
+            "merge_requests_events": true,
+            "issues_events": false
+        });
+        let t = gl_hook_to_trigger(&hook);
+        assert_eq!(t.id, "77");
+        assert_eq!(t.url, "https://hooks.fastverk.com/webhook");
+        assert_eq!(t.events, vec!["push".to_string(), "pull_request".to_string()]);
+        assert!(t.active);
+    }
+
+    #[test]
+    fn gitlab_hook_push_only() {
+        let hook = json!({ "id": 5, "url": "u", "push_events": true, "merge_requests_events": false });
+        assert_eq!(gl_hook_to_trigger(&hook).events, vec!["push".to_string()]);
     }
 }
 

@@ -13,12 +13,21 @@ concurrency:
 
 jobs:
   test:
-    name: bazel test //...
+    name: bazel test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          # Linux builds everything, including the forge-gateway OCI image.
+          - os: ubuntu-latest
+            targets: "//..."
+          # rules_oci has no macOS platform, so `//...` can't even ANALYZE the
+          # image targets on darwin. Test the code (the //:forge_test target
+          # compiles the whole crate — lib + gateway — and runs the unit tests);
+          # the image is a linux deploy artifact, covered by the ubuntu job.
+          - os: macos-latest
+            targets: "//:forge_test"
     steps:
       - uses: actions/checkout@v4
       - uses: bazel-contrib/setup-bazel@0.10.0
@@ -26,7 +35,7 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-${{ matrix.os }}
           repository-cache: true
-      - run: bazel test //... --test_output=errors
+      - run: bazel test ${{ matrix.targets }} --test_output=errors
 
   buildifier:
     name: buildifier lint

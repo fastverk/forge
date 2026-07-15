@@ -28,6 +28,21 @@ def rust_service_image(
         user = None,
         args = None,
         visibility = None):
+    """Package a Rust service `binary` into a distroless_cc OCI image (+ push/load).
+
+    Emits `<name>` (oci_image), `<name>_push` (oci_push), and `<name>_load`
+    (oci_load) targets; the binary + runfiles are layered under /app.
+
+    Args:
+        name: Base name for the generated image/push/load targets.
+        binary: The rust_binary target to containerize.
+        repository: Push repository (ECR URI set at push time when None).
+        exposed_ports: Container ports to expose (list of "<port>/<proto>").
+        env: Extra environment variables (dict).
+        user: Runtime user (defaults to the image's).
+        args: Default container args.
+        visibility: Target visibility.
+    """
     exposed_ports = exposed_ports or []
     env = dict(env or {})
 
