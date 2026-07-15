@@ -20,7 +20,7 @@ pub mod gateway;
 pub mod github;
 pub mod gitlab;
 
-pub use pb::{ChangeRef, ChangeState, CiStatus, FileBlob, Forge as ForgeKind, RepoRef};
+pub use pb::{ChangeRef, ChangeState, CiStatus, FileBlob, Forge as ForgeKind, RepoRef, Trigger};
 
 /// A forge operation error. A concrete type (not `anyhow`) so the public `Forge`
 /// API doesn't leak `anyhow` — which also lets consumers in a *different* crate
@@ -68,6 +68,21 @@ pub struct PipelineStatus {
     pub status: CiStatus,
     pub pipeline_id: String,
     pub url: String,
+}
+
+/// Outcome of [`Forge::ensure_trigger`] — idempotent over an existing hook.
+#[derive(Debug, Clone)]
+pub struct EnsuredTrigger {
+    pub trigger: Trigger,
+    /// True if this call created the hook; false if it already existed.
+    pub created: bool,
+}
+
+/// The default inbound events a build trigger subscribes to, in the normalized
+/// (GitHub) vocabulary. The GitLab adapter maps these to its boolean flags.
+#[must_use]
+pub fn default_trigger_events() -> Vec<String> {
+    vec!["push".to_string(), "pull_request".to_string()]
 }
 
 /// Convenience: `owner/name` for a repo (owner may be a nested group path).
@@ -141,4 +156,26 @@ pub trait Forge: Send + Sync {
 
     /// The change's open/merged/closed state.
     async fn change_state(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<ChangeState>;
+
+    /// List the repo's configured inbound triggers (webhooks) — how a caller
+    /// reads "does this repo have incoming triggers established?" straight from
+    /// the forge (feeds a readiness criterion). Default: unsupported, so an
+    /// out-of-crate adapter that predates this method still compiles.
+    async fn list_triggers(&self, _repo: &RepoRef) -> ForgeResult<Vec<Trigger>> {
+        Err(ForgeError::msg("list_triggers not supported by this forge adapter"))
+    }
+
+    /// Idempotently ensure an inbound trigger at `url` subscribed to `events`
+    /// (empty ⇒ [`default_trigger_events`]) with `secret` as its verification
+    /// secret (empty ⇒ leave unset). An existing hook at `url` returns
+    /// `created = false`. Default: unsupported (see [`Forge::list_triggers`]).
+    async fn ensure_trigger(
+        &self,
+        _repo: &RepoRef,
+        _url: &str,
+        _events: &[String],
+        _secret: &str,
+    ) -> ForgeResult<EnsuredTrigger> {
+        Err(ForgeError::msg("ensure_trigger not supported by this forge adapter"))
+    }
 }

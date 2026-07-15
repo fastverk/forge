@@ -153,6 +153,44 @@ message GetChangeStateResponse {
   string merge_commit_sha = 2;
 }
 
+// ── inbound triggers (webhooks) ─────────────────────────────────────────
+// A configured inbound trigger — a repo/project webhook that delivers push /
+// change events to the platform's receiver. This is how a repo's CI is "wired":
+// READ them (ListTriggers) to answer "does this repo have incoming triggers
+// established?" — feeding a readiness criterion — and ENSURE one (EnsureTrigger)
+// to install it, idempotently.
+message Trigger {
+  // Forge-assigned hook id (GitHub hook id / GitLab hook id), as a string.
+  string id = 1;
+  // The delivery URL (the fastverk receiver).
+  string url = 2;
+  // Event names the hook is subscribed to, NORMALIZED across forges to the
+  // GitHub vocabulary ("push", "pull_request"); the GitLab adapter maps its
+  // boolean flags to/from these.
+  repeated string events = 3;
+  // Whether the hook is active.
+  bool active = 4;
+}
+
+message ListTriggersRequest { RepoRef repo = 1; }
+message ListTriggersResponse { repeated Trigger triggers = 1; }
+
+message EnsureTriggerRequest {
+  RepoRef repo = 1;
+  // Delivery URL to ensure (e.g. https://hooks.fastverk.com/webhook).
+  string url = 2;
+  // Normalized events to subscribe (empty ⇒ the adapter default: push +
+  // pull_request).
+  repeated string events = 3;
+  // HMAC/verification secret to set on the hook (empty ⇒ leave unset).
+  string secret = 4;
+}
+message EnsureTriggerResponse {
+  Trigger trigger = 1;
+  // True if this call created the hook; false if it already existed (idempotent).
+  bool created = 2;
+}
+
 // The generic forge service. GitHub + GitLab adapters implement these.
 service ForgeService {
   rpc GetDefaultBranch(GetDefaultBranchRequest) returns (GetDefaultBranchResponse);
@@ -164,4 +202,7 @@ service ForgeService {
   rpc PipelineStatus(PipelineStatusRequest) returns (PipelineStatusResponse);
   rpc Merge(MergeRequest) returns (MergeResponse);
   rpc GetChangeState(GetChangeStateRequest) returns (GetChangeStateResponse);
+  // Inbound trigger (webhook) management.
+  rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
+  rpc EnsureTrigger(EnsureTriggerRequest) returns (EnsureTriggerResponse);
 }

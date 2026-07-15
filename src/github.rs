@@ -13,8 +13,9 @@ use octocrab::Octocrab;
 use serde_json::{json, Value};
 
 use crate::{
-    BranchOutcome, ChangeRef, ChangeState, CiStatus, FileBlob, Forge, ForgeKind, OpenedChange,
-    ForgeError, ForgeResult, PipelineStatus, RepoRef,
+    default_trigger_events, BranchOutcome, ChangeRef, ChangeState, CiStatus, EnsuredTrigger,
+    FileBlob, Forge, ForgeError, ForgeKind, ForgeResult, OpenedChange, PipelineStatus, RepoRef,
+    Trigger,
 };
 
 const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -346,5 +347,95 @@ impl Forge for GitHubForge {
             Some("closed") => ChangeState::Closed,
             _ => ChangeState::Open,
         })
+    }
+
+    async fn list_triggers(&self, repo: &RepoRef) -> ForgeResult<Vec<Trigger>> {
+        let route = format!("/repos/{}/{}/hooks", repo.owner, repo.name);
+        let hooks: Vec<Value> = self
+            .client
+            .get::<Vec<Value>, _, ()>(&route, None)
+            .await
+            .with_context(|| format!("list hooks {route}"))?;
+        Ok(hooks.iter().map(gh_hook_to_trigger).collect())
+    }
+
+    async fn ensure_trigger(
+        &self,
+        repo: &RepoRef,
+        url: &str,
+        events: &[String],
+        secret: &str,
+    ) -> ForgeResult<EnsuredTrigger> {
+        // Idempotent: a hook already delivering to `url` is returned as-is.
+        if let Some(trigger) = self
+            .list_triggers(repo)
+            .await?
+            .into_iter()
+            .find(|t| t.url == url)
+        {
+            return Ok(EnsuredTrigger { trigger, created: false });
+        }
+        let events = if events.is_empty() {
+            default_trigger_events()
+        } else {
+            events.to_vec()
+        };
+        let mut config = json!({ "url": url, "content_type": "json" });
+        if !secret.is_empty() {
+            config["secret"] = json!(secret);
+        }
+        let body = json!({ "name": "web", "active": true, "events": events, "config": config });
+        let route = format!("/repos/{}/{}/hooks", repo.owner, repo.name);
+        let created: Value = self
+            .client
+            .post::<_, Value>(&route, Some(&body))
+            .await
+            .with_context(|| format!("create hook {route}"))?;
+        Ok(EnsuredTrigger {
+            trigger: gh_hook_to_trigger(&created),
+            created: true,
+        })
+    }
+}
+
+/// Map a GitHub hook JSON object to a normalized [`Trigger`]. GitHub already
+/// uses "push"/"pull_request" event names, so events pass through.
+fn gh_hook_to_trigger(h: &Value) -> Trigger {
+    Trigger {
+        // hook id is a JSON number → stringify (Value::to_string on a number
+        // yields the bare digits, e.g. "12345").
+        id: h.get("id").map(ToString::to_string).unwrap_or_default(),
+        url: h
+            .get("config")
+            .and_then(|c| c.get("url"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        events: h
+            .get("events")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        active: h.get("active").and_then(Value::as_bool).unwrap_or(false),
+    }
+}
+
+#[cfg(test)]
+mod trigger_tests {
+    use super::*;
+
+    #[test]
+    fn maps_github_hook_to_trigger() {
+        let hook = json!({
+            "id": 12345,
+            "active": true,
+            "events": ["push", "pull_request"],
+            "config": { "url": "https://hooks.fastverk.com/webhook", "content_type": "json" }
+        });
+        let t = gh_hook_to_trigger(&hook);
+        assert_eq!(t.id, "12345");
+        assert_eq!(t.url, "https://hooks.fastverk.com/webhook");
+        assert_eq!(t.events, vec!["push".to_string(), "pull_request".to_string()]);
+        assert!(t.active);
     }
 }

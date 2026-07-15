@@ -21,10 +21,11 @@ use crate::gitlab::GitLabForge;
 use crate::pb::forge_service_server::{ForgeService, ForgeServiceServer};
 use crate::pb::{
     CommitFileRequest, CommitFileResponse, CreateBranchRequest, CreateBranchResponse,
-    EnableAutoMergeRequest, EnableAutoMergeResponse, GetChangeStateRequest, GetChangeStateResponse,
-    GetDefaultBranchRequest, GetDefaultBranchResponse, MergeRequest, MergeResponse,
-    OpenChangeRequest, OpenChangeResponse, PipelineStatusRequest, PipelineStatusResponse,
-    ReadFileRequest, ReadFileResponse,
+    EnableAutoMergeRequest, EnableAutoMergeResponse, EnsureTriggerRequest, EnsureTriggerResponse,
+    GetChangeStateRequest, GetChangeStateResponse, GetDefaultBranchRequest,
+    GetDefaultBranchResponse, ListTriggersRequest, ListTriggersResponse, MergeRequest,
+    MergeResponse, OpenChangeRequest, OpenChangeResponse, PipelineStatusRequest,
+    PipelineStatusResponse, ReadFileRequest, ReadFileResponse,
 };
 use crate::{Forge, ForgeError, ForgeKind, RepoRef};
 
@@ -228,6 +229,30 @@ impl ForgeService for ForgeGateway {
             state: state as i32,
             // The trait reports state only; the merge sha is available via Merge.
             merge_commit_sha: String::new(),
+        }))
+    }
+
+    async fn list_triggers(
+        &self,
+        req: Request<ListTriggersRequest>,
+    ) -> Result<Response<ListTriggersResponse>, Status> {
+        let (forge, repo, _msg) = adapter_for!(self, req);
+        let triggers = forge.list_triggers(&repo).await.map_err(to_status)?;
+        Ok(Response::new(ListTriggersResponse { triggers }))
+    }
+
+    async fn ensure_trigger(
+        &self,
+        req: Request<EnsureTriggerRequest>,
+    ) -> Result<Response<EnsureTriggerResponse>, Status> {
+        let (forge, repo, msg) = adapter_for!(self, req);
+        let out = forge
+            .ensure_trigger(&repo, &msg.url, &msg.events, &msg.secret)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(EnsureTriggerResponse {
+            trigger: Some(out.trigger),
+            created: out.created,
         }))
     }
 }
