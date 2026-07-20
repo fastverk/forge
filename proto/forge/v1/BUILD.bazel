@@ -2,4 +2,7 @@ package(default_visibility = ["//visibility:public"])
 
 # Compiled by build.rs (tonic-build); exported so the cargo_build_script can
 # data-dep the file.
-exports_files(["forge.proto"])
+exports_files([
+    "forge.proto",
+    "provision.proto",
+])
