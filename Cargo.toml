@@ -49,6 +49,8 @@ tonic-build = "0.12"
 [dev-dependencies]
 # The conformance suite drives the async trait directly.
 tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+# Used in `src/recorded.rs` tests for temporary fixture files.
+tempfile = "3"
 
 [lints.rust]
 unsafe_code = "forbid"

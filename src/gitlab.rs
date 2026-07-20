@@ -22,6 +22,9 @@ pub struct GitLabForge {
     host: String,
     token: String,
     http: reqwest::Client,
+    /// When set (testing only), overrides the `https://<host>/api/v4` prefix so
+    /// the adapter can be aimed at a local [`forge::recorded::RecordedServer`].
+    base_url_override: Option<String>,
 }
 
 impl GitLabForge {
@@ -39,6 +42,30 @@ impl GitLabForge {
             host,
             token: token.into(),
             http,
+            base_url_override: None,
+        })
+    }
+
+    /// Build an adapter that sends all requests to `base_url` instead of the
+    /// normal `https://<host>/api/v4`.
+    ///
+    /// Intended for test fixtures only — pass a [`forge::recorded::RecordedServer`]
+    /// base URL here so the adapter talks to the local replay server.
+    ///
+    /// ```rust,ignore
+    /// let server = RecordedServer::start("tests/fixtures/gitlab.json", "gitlab", upstream).await;
+    /// let forge = GitLabForge::with_base_url(server.base_url(), token);
+    /// ```
+    pub fn with_base_url(base_url: impl Into<String>, token: impl Into<String>) -> ForgeResult<Self> {
+        let http = reqwest::Client::builder()
+            .user_agent("fastverk-forge")
+            .build()
+            .context("build gitlab http client")?;
+        Ok(Self {
+            host: "localhost".into(),
+            token: token.into(),
+            http,
+            base_url_override: Some(base_url.into()),
         })
     }
 
@@ -50,14 +77,23 @@ impl GitLabForge {
         }
     }
 
-    /// `https://<host>/api/v4/projects/<url-encoded owner/name>`
+    /// `https://<host>/api/v4/projects/<url-encoded owner/name>` —
+    /// or the base-URL override when set.
     fn base(&self, repo: &RepoRef) -> String {
         let full = crate::repo_slug(repo);
-        format!(
-            "https://{}/api/v4/projects/{}",
-            self.host_for(repo),
-            urlencoding::encode(&full)
-        )
+        if let Some(ref override_url) = self.base_url_override {
+            format!(
+                "{}/api/v4/projects/{}",
+                override_url.trim_end_matches('/'),
+                urlencoding::encode(&full)
+            )
+        } else {
+            format!(
+                "https://{}/api/v4/projects/{}",
+                self.host_for(repo),
+                urlencoding::encode(&full)
+            )
+        }
     }
 
     async fn send(&self, rb: reqwest::RequestBuilder) -> ForgeResult<reqwest::Response> {
@@ -503,6 +539,21 @@ mod tests {
         assert_eq!(
             f.base(&nested),
             "https://gitlab.savvifi.com/api/v4/projects/group%2Fsub%2Frepo"
+        );
+    }
+
+    #[test]
+    fn with_base_url_routes_through_override() {
+        let f = GitLabForge::with_base_url("http://127.0.0.1:9999", "tok").unwrap();
+        let repo = RepoRef {
+            forge: ForgeKind::Gitlab as i32,
+            host: String::new(),
+            owner: "acme".into(),
+            name: "widgets".into(),
+        };
+        assert_eq!(
+            f.base(&repo),
+            "http://127.0.0.1:9999/api/v4/projects/acme%2Fwidgets"
         );
     }
 }

@@ -27,6 +27,12 @@ pub mod gitlab;
 #[cfg(feature = "testing")]
 pub mod testing;
 
+// Recorded-fixture harness: replay/record HTTP traffic for offline conformance
+// testing against real adapters. See `src/recorded.rs` for the full API and the
+// re-record workflow.
+#[cfg(feature = "testing")]
+pub mod recorded;
+
 pub use pb::{ChangeRef, ChangeState, CiStatus, FileBlob, Forge as ForgeKind, RepoRef, Trigger};
 
 /// A forge operation error. A concrete type (not `anyhow`) so the public `Forge`
