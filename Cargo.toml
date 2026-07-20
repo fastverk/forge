@@ -36,8 +36,19 @@ urlencoding = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[features]
+default = []
+# Exposes `forge::testing::FakeForge` — the in-memory contract double. Non-default
+# so consumers (wave is a standalone public CLI) don't carry it, but a REAL
+# feature rather than `#[cfg(test)]` so out-of-crate Bazel modules can use it.
+testing = []
+
 [build-dependencies]
 tonic-build = "0.12"
+
+[dev-dependencies]
+# The conformance suite drives the async trait directly.
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -62,3 +62,36 @@ rust_test(
     crate = ":forge",
     edition = "2021",
 )
+
+# The same crate with the `testing` feature on, exposing forge::testing::FakeForge.
+# A SEPARATE target rather than a feature on :forge so consumers who only want the
+# contract (wave is a standalone public CLI) don't compile the double — while
+# out-of-crate Bazel modules (plugin-forge, geetch) can still depend on it, which
+# a #[cfg(test)] module could never provide.
+rust_library(
+    name = "forge_testing",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    ),
+    crate_features = ["testing"],
+    crate_name = "forge",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [":build_script"] + all_crate_deps(normal = True),
+)
+
+# The contract conformance suite — the executable specification. An adapter is
+# correct when this passes; new contract semantics get a case HERE first, never
+# in an adapter-local test. geetch's B2 acceptance is adding one fixture to it.
+rust_test(
+    name = "conformance",
+    srcs = ["tests/conformance.rs"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [":forge_testing"] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
