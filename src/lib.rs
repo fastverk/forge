@@ -20,6 +20,13 @@ pub mod gateway;
 pub mod github;
 pub mod gitlab;
 
+// Test doubles for the `Forge` contract. A real module behind a non-default
+// feature, NOT `#[cfg(test)]`: wave / plugin-forge / geetch are each a separate
+// Bazel module and cannot see this crate's test-only code. Same reasoning that
+// made `ForgeError` concrete rather than `anyhow`.
+#[cfg(feature = "testing")]
+pub mod testing;
+
 pub use pb::{ChangeRef, ChangeState, CiStatus, FileBlob, Forge as ForgeKind, RepoRef, Trigger};
 
 /// A forge operation error. A concrete type (not `anyhow`) so the public `Forge`
