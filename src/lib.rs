@@ -114,7 +114,12 @@ pub trait Forge: Send + Sync {
     async fn default_branch(&self, repo: &RepoRef) -> ForgeResult<String>;
 
     /// Read a file at `r#ref` (empty = default branch). `Ok(None)` = absent.
-    async fn read_file(&self, repo: &RepoRef, path: &str, r#ref: &str) -> ForgeResult<Option<FileBlob>>;
+    async fn read_file(
+        &self,
+        repo: &RepoRef,
+        path: &str,
+        r#ref: &str,
+    ) -> ForgeResult<Option<FileBlob>>;
 
     /// Create branch `name` from `from_ref` (a branch name or sha). Idempotent:
     /// an existing branch returns `already_existed = true`, not an error.
@@ -156,7 +161,11 @@ pub trait Forge: Send + Sync {
     async fn enable_auto_merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<bool>;
 
     /// The pipeline status for the change's head.
-    async fn pipeline_status(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<PipelineStatus>;
+    async fn pipeline_status(
+        &self,
+        repo: &RepoRef,
+        change: &ChangeRef,
+    ) -> ForgeResult<PipelineStatus>;
 
     /// Merge the change now. Returns the merge commit sha.
     async fn merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<String>;
@@ -169,7 +178,9 @@ pub trait Forge: Send + Sync {
     /// the forge (feeds a readiness criterion). Default: unsupported, so an
     /// out-of-crate adapter that predates this method still compiles.
     async fn list_triggers(&self, _repo: &RepoRef) -> ForgeResult<Vec<Trigger>> {
-        Err(ForgeError::msg("list_triggers not supported by this forge adapter"))
+        Err(ForgeError::msg(
+            "list_triggers not supported by this forge adapter",
+        ))
     }
 
     /// Idempotently ensure an inbound trigger at `url` subscribed to `events`
@@ -183,6 +194,8 @@ pub trait Forge: Send + Sync {
         _events: &[String],
         _secret: &str,
     ) -> ForgeResult<EnsuredTrigger> {
-        Err(ForgeError::msg("ensure_trigger not supported by this forge adapter"))
+        Err(ForgeError::msg(
+            "ensure_trigger not supported by this forge adapter",
+        ))
     }
 }

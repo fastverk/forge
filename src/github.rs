@@ -18,7 +18,8 @@ use crate::{
     Trigger,
 };
 
-const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+const B64: base64::engine::general_purpose::GeneralPurpose =
+    base64::engine::general_purpose::STANDARD;
 
 /// A GitHub adapter wrapping an authenticated octocrab client.
 pub struct GitHubForge {
@@ -83,7 +84,12 @@ impl Forge for GitHubForge {
         Ok(meta.default_branch.unwrap_or_else(|| "main".into()))
     }
 
-    async fn read_file(&self, repo: &RepoRef, path: &str, r#ref: &str) -> ForgeResult<Option<FileBlob>> {
+    async fn read_file(
+        &self,
+        repo: &RepoRef,
+        path: &str,
+        r#ref: &str,
+    ) -> ForgeResult<Option<FileBlob>> {
         let branch = if r#ref.is_empty() {
             self.default_branch(repo).await?
         } else {
@@ -99,7 +105,9 @@ impl Forge for GitHubForge {
             .await;
         let contents = match res {
             Ok(c) => c,
-            Err(octocrab::Error::GitHub { source, .. }) if source.status_code == http::StatusCode::NOT_FOUND => {
+            Err(octocrab::Error::GitHub { source, .. })
+                if source.status_code == http::StatusCode::NOT_FOUND =>
+            {
                 return Ok(None);
             }
             Err(e) => {
@@ -131,7 +139,9 @@ impl Forge for GitHubForge {
         let base_ref = self
             .client
             .repos(Self::owner(repo), &repo.name)
-            .get_ref(&octocrab::params::repos::Reference::Branch(from_ref.to_string()))
+            .get_ref(&octocrab::params::repos::Reference::Branch(
+                from_ref.to_string(),
+            ))
             .await
             .with_context(|| format!("get_ref {from_ref}"))?;
         let base_sha = match &base_ref.object {
@@ -150,7 +160,9 @@ impl Forge for GitHubForge {
                 let exists = self
                     .client
                     .repos(Self::owner(repo), &repo.name)
-                    .get_ref(&octocrab::params::repos::Reference::Branch(name.to_string()))
+                    .get_ref(&octocrab::params::repos::Reference::Branch(
+                        name.to_string(),
+                    ))
                     .await
                     .is_ok();
                 if exists {
@@ -263,7 +275,11 @@ impl Forge for GitHubForge {
         }
     }
 
-    async fn pipeline_status(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<PipelineStatus> {
+    async fn pipeline_status(
+        &self,
+        repo: &RepoRef,
+        change: &ChangeRef,
+    ) -> ForgeResult<PipelineStatus> {
         let pr = self.pr_json(repo, change.number).await?;
         let head_sha = pr
             .get("head")
@@ -271,10 +287,20 @@ impl Forge for GitHubForge {
             .and_then(|s| s.as_str())
             .ok_or_else(|| anyhow!("PR {} has no head.sha", change.number))?;
 
-        let route = format!("/repos/{}/{}/commits/{}/check-runs", repo.owner, repo.name, head_sha);
-        let runs: Value = self.client.get(&route, None::<&()>).await.context("check-runs")?;
+        let route = format!(
+            "/repos/{}/{}/commits/{}/check-runs",
+            repo.owner, repo.name, head_sha
+        );
+        let runs: Value = self
+            .client
+            .get(&route, None::<&()>)
+            .await
+            .context("check-runs")?;
         let arr = runs.get("check_runs").and_then(|v| v.as_array());
-        let url = format!("https://github.com/{}/{}/commits/{}", repo.owner, repo.name, head_sha);
+        let url = format!(
+            "https://github.com/{}/{}/commits/{}",
+            repo.owner, repo.name, head_sha
+        );
 
         if let Some(runs) = arr {
             if !runs.is_empty() {
@@ -308,8 +334,15 @@ impl Forge for GitHubForge {
         }
 
         // Fall back to the legacy combined status API.
-        let sroute = format!("/repos/{}/{}/commits/{}/status", repo.owner, repo.name, head_sha);
-        let combined: Value = self.client.get(&sroute, None::<&()>).await.context("combined status")?;
+        let sroute = format!(
+            "/repos/{}/{}/commits/{}/status",
+            repo.owner, repo.name, head_sha
+        );
+        let combined: Value = self
+            .client
+            .get(&sroute, None::<&()>)
+            .await
+            .context("combined status")?;
         let status = match combined.get("state").and_then(|v| v.as_str()) {
             Some("success") => CiStatus::Success,
             Some("failure") | Some("error") => CiStatus::Failed,
@@ -324,7 +357,10 @@ impl Forge for GitHubForge {
     }
 
     async fn merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<String> {
-        let route = format!("/repos/{}/{}/pulls/{}/merge", repo.owner, repo.name, change.number);
+        let route = format!(
+            "/repos/{}/{}/pulls/{}/merge",
+            repo.owner, repo.name, change.number
+        );
         let resp: Value = self
             .client
             .put(&route, Some(&json!({ "merge_method": "merge" })))
@@ -373,7 +409,10 @@ impl Forge for GitHubForge {
             .into_iter()
             .find(|t| t.url == url)
         {
-            return Ok(EnsuredTrigger { trigger, created: false });
+            return Ok(EnsuredTrigger {
+                trigger,
+                created: false,
+            });
         }
         let events = if events.is_empty() {
             default_trigger_events()
@@ -414,7 +453,11 @@ fn gh_hook_to_trigger(h: &Value) -> Trigger {
         events: h
             .get("events")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| e.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         active: h.get("active").and_then(Value::as_bool).unwrap_or(false),
     }
@@ -435,7 +478,10 @@ mod trigger_tests {
         let t = gh_hook_to_trigger(&hook);
         assert_eq!(t.id, "12345");
         assert_eq!(t.url, "https://hooks.fastverk.com/webhook");
-        assert_eq!(t.events, vec!["push".to_string(), "pull_request".to_string()]);
+        assert_eq!(
+            t.events,
+            vec!["push".to_string(), "pull_request".to_string()]
+        );
         assert!(t.active);
     }
 }

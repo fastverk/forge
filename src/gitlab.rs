@@ -70,7 +70,10 @@ impl GitLabForge {
     }
 
     /// Send + require 2xx, returning the parsed JSON body.
-    async fn json<T: for<'de> Deserialize<'de>>(&self, rb: reqwest::RequestBuilder) -> ForgeResult<T> {
+    async fn json<T: for<'de> Deserialize<'de>>(
+        &self,
+        rb: reqwest::RequestBuilder,
+    ) -> ForgeResult<T> {
         let resp = self.send(rb).await?;
         let status = resp.status();
         let text = resp.text().await.context("read gitlab body")?;
@@ -107,7 +110,7 @@ struct Project {
 
 #[derive(Deserialize)]
 struct GlFile {
-    content: String,             // base64
+    content: String, // base64
     blob_id: String,
     last_commit_id: String,
     file_path: String,
@@ -145,7 +148,12 @@ impl Forge for GitLabForge {
         Ok(p.default_branch.unwrap_or_else(|| "main".into()))
     }
 
-    async fn read_file(&self, repo: &RepoRef, path: &str, r#ref: &str) -> ForgeResult<Option<FileBlob>> {
+    async fn read_file(
+        &self,
+        repo: &RepoRef,
+        path: &str,
+        r#ref: &str,
+    ) -> ForgeResult<Option<FileBlob>> {
         let branch = if r#ref.is_empty() {
             self.default_branch(repo).await?
         } else {
@@ -164,7 +172,10 @@ impl Forge for GitLabForge {
         let status = resp.status();
         let text = resp.text().await.context("read gitlab file body")?;
         if !status.is_success() {
-            return Err(ForgeError::msg(format!("gitlab read_file {status}: {}", text.trim())));
+            return Err(ForgeError::msg(format!(
+                "gitlab read_file {status}: {}",
+                text.trim()
+            )));
         }
         let f: GlFile = serde_json::from_str(&text).context("parse gitlab file")?;
         let raw = base64::Engine::decode(
@@ -209,7 +220,10 @@ impl Forge for GitLabForge {
                 already_existed: true,
             });
         }
-        return Err(ForgeError::msg(format!("gitlab create_branch {status}: {}", text.trim())));
+        return Err(ForgeError::msg(format!(
+            "gitlab create_branch {status}: {}",
+            text.trim()
+        )));
     }
 
     async fn commit_file(
@@ -227,7 +241,11 @@ impl Forge for GitLabForge {
         // {id}, which the caller needs as the exact sha to build + arm the merge status
         // on. Empty blob_sha ⇒ the file is new ⇒ "create"; else "update".
         let url = format!("{}/repository/commits", self.base(repo));
-        let action = if blob_sha.is_empty() { "create" } else { "update" };
+        let action = if blob_sha.is_empty() {
+            "create"
+        } else {
+            "update"
+        };
         let body = json!({
             "branch": branch,
             "commit_message": message,
@@ -241,7 +259,10 @@ impl Forge for GitLabForge {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(ForgeError::msg(format!("gitlab commit_file {status}: {}", text.trim())));
+            return Err(ForgeError::msg(format!(
+                "gitlab commit_file {status}: {}",
+                text.trim()
+            )));
         }
         // The commits API returns the new commit object: {"id": "<sha>", ...}.
         let commit: serde_json::Value =
@@ -306,7 +327,10 @@ impl Forge for GitLabForge {
                 already_existed: true,
             });
         }
-        return Err(ForgeError::msg(format!("gitlab open_change {status}: {}", text.trim())));
+        return Err(ForgeError::msg(format!(
+            "gitlab open_change {status}: {}",
+            text.trim()
+        )));
     }
 
     async fn enable_auto_merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<bool> {
@@ -330,10 +354,17 @@ impl Forge for GitLabForge {
             return Ok(false);
         }
         let text = resp.text().await.unwrap_or_default();
-        return Err(ForgeError::msg(format!("gitlab enable_auto_merge {status}: {}", text.trim())));
+        return Err(ForgeError::msg(format!(
+            "gitlab enable_auto_merge {status}: {}",
+            text.trim()
+        )));
     }
 
-    async fn pipeline_status(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<PipelineStatus> {
+    async fn pipeline_status(
+        &self,
+        repo: &RepoRef,
+        change: &ChangeRef,
+    ) -> ForgeResult<PipelineStatus> {
         let url = format!(
             "{}/merge_requests/{}/pipelines",
             self.base(repo),
@@ -390,7 +421,10 @@ impl Forge for GitLabForge {
             .into_iter()
             .find(|t| t.url == url)
         {
-            return Ok(EnsuredTrigger { trigger, created: false });
+            return Ok(EnsuredTrigger {
+                trigger,
+                created: false,
+            });
         }
         let want = if events.is_empty() {
             default_trigger_events()
@@ -401,10 +435,15 @@ impl Forge for GitLabForge {
         // normalized names onto the two flags a build trigger needs.
         let mut payload = serde_json::Map::new();
         payload.insert("url".into(), json!(url));
-        payload.insert("push_events".into(), json!(want.iter().any(|e| e == "push")));
+        payload.insert(
+            "push_events".into(),
+            json!(want.iter().any(|e| e == "push")),
+        );
         payload.insert(
             "merge_requests_events".into(),
-            json!(want.iter().any(|e| e == "pull_request" || e == "merge_request")),
+            json!(want
+                .iter()
+                .any(|e| e == "pull_request" || e == "merge_request")),
         );
         payload.insert("enable_ssl_verification".into(), json!(true));
         if !secret.is_empty() {
@@ -426,15 +465,25 @@ impl Forge for GitLabForge {
 /// hooks have no "active" flag — presence implies active.
 fn gl_hook_to_trigger(h: &Value) -> Trigger {
     let mut events = Vec::new();
-    if h.get("push_events").and_then(Value::as_bool).unwrap_or(false) {
+    if h.get("push_events")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         events.push("push".to_string());
     }
-    if h.get("merge_requests_events").and_then(Value::as_bool).unwrap_or(false) {
+    if h.get("merge_requests_events")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         events.push("pull_request".to_string());
     }
     Trigger {
         id: h.get("id").map(ToString::to_string).unwrap_or_default(),
-        url: h.get("url").and_then(Value::as_str).unwrap_or_default().to_string(),
+        url: h
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         events,
         active: true,
     }
@@ -456,13 +505,17 @@ mod trigger_tests {
         let t = gl_hook_to_trigger(&hook);
         assert_eq!(t.id, "77");
         assert_eq!(t.url, "https://hooks.fastverk.com/webhook");
-        assert_eq!(t.events, vec!["push".to_string(), "pull_request".to_string()]);
+        assert_eq!(
+            t.events,
+            vec!["push".to_string(), "pull_request".to_string()]
+        );
         assert!(t.active);
     }
 
     #[test]
     fn gitlab_hook_push_only() {
-        let hook = json!({ "id": 5, "url": "u", "push_events": true, "merge_requests_events": false });
+        let hook =
+            json!({ "id": 5, "url": "u", "push_events": true, "merge_requests_events": false });
         assert_eq!(gl_hook_to_trigger(&hook).events, vec!["push".to_string()]);
     }
 }
