@@ -19,7 +19,10 @@ cargo_build_script(
     build_script_env = {
         "PROTOC": "$(execpath @protobuf//:protoc)",
     },
-    data = ["//proto/forge/v1:forge.proto"],
+    data = [
+        "//proto/forge/v1:forge.proto",
+        "//proto/forge/v1:provision.proto",
+    ],
     edition = "2021",
     tools = ["@protobuf//:protoc"],
     deps = all_crate_deps(build = True),

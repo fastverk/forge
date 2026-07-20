@@ -256,6 +256,7 @@ impl Forge for FakeForge {
                         number: c.number,
                         url: format!("https://fake/{}/changes/{}", repo_slug(repo), c.number),
                         branch: c.head.clone(),
+                        id: String::new(),
                     },
                     already_existed: true,
                 });
@@ -276,6 +277,7 @@ impl Forge for FakeForge {
                     number,
                     url: format!("https://fake/{}/changes/{number}", repo_slug(repo)),
                     branch: head.to_string(),
+                    id: String::new(),
                 },
                 already_existed: false,
             })
@@ -384,6 +386,7 @@ impl Forge for FakeForge {
                     events.to_vec()
                 },
                 active: true,
+                target: String::new(),
             };
             r.triggers.push(trigger.clone());
             Ok(EnsuredTrigger {
