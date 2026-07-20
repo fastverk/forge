@@ -35,5 +35,44 @@ common --registry=https://bcr.bazel.build/
 bazel_dep(name = "forge", version = "0.0.1")
 ```
 
-Then depend on `@forge//:forge` from a `rust_library`. For Cargo/IDE iteration the
-crate also builds standalone (`cargo build`).
+## Testing
+
+### Conformance suite
+
+`tests/conformance.rs` is the executable spec for the `Forge` contract. Run it:
+
+```sh
+cargo test --features testing
+```
+
+All conformance cases run against `FakeForge` (an in-memory double) offline.
+Real-adapter fixtures are replayed from JSON files in `tests/fixtures/` using
+the `RecordedServer` harness in `src/recorded.rs`.
+
+### Re-recording fixtures
+
+When a real adapter needs re-recording (API change, new test cases):
+
+```sh
+# GitHub — needs a scratch repo and a token with repo + webhook scope
+FORGE_RECORD=1 \
+  GITHUB_TOKEN=ghp_... \
+  FORGE_RECORD_OWNER=<scratch-org> \
+  FORGE_RECORD_REPO=forge-conformance-scratch \
+  cargo test --features testing -- github_recorded --nocapture
+
+# GitLab — needs a scratch group/project and a token with api scope
+FORGE_RECORD=1 \
+  GITLAB_TOKEN=glpat-... \
+  FORGE_RECORD_HOST=gitlab.com \
+  FORGE_RECORD_OWNER=<scratch-group> \
+  FORGE_RECORD_REPO=forge-conformance-scratch \
+  cargo test --features testing -- gitlab_recorded --nocapture
+```
+
+The fixture file (`tests/fixtures/{github,gitlab}.json`) is written on exit.
+Commit it; CI replays it with no credentials and no network access.
+
+**Secrets are scrubbed automatically** — `Authorization` headers are never
+written to fixture files.  See `tests/fixtures/README.md` and `src/recorded.rs`.
+
