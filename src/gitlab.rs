@@ -23,7 +23,7 @@ pub struct GitLabForge {
     token: String,
     http: reqwest::Client,
     /// When set (testing only), overrides the `https://<host>/api/v4` prefix so
-    /// the adapter can be aimed at a local [`forge::recorded::RecordedServer`].
+    /// the adapter can be aimed at a local `RecordedServer`.
     base_url_override: Option<String>,
 }
 
@@ -49,7 +49,7 @@ impl GitLabForge {
     /// Build an adapter that sends all requests to `base_url` instead of the
     /// normal `https://<host>/api/v4`.
     ///
-    /// Intended for test fixtures only — pass a [`forge::recorded::RecordedServer`]
+    /// Intended for test fixtures only — pass a `forge::recorded::RecordedServer`
     /// base URL here so the adapter talks to the local replay server.
     ///
     /// ```rust,ignore

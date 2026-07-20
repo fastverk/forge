@@ -121,9 +121,9 @@ impl FixtureFile {
     /// a missing file means someone forgot to run the recorder.
     pub fn load(path: &Path) -> Self {
         let data = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("fixture file {path:?} not found: {e}\n\nRun with FORGE_RECORD=1 to record it."));
+            .unwrap_or_else(|e| panic!("fixture file {} not found: {e}\n\nRun with FORGE_RECORD=1 to record it.", path.display()));
         serde_json::from_str(&data)
-            .unwrap_or_else(|e| panic!("fixture file {path:?} is corrupt: {e}"))
+            .unwrap_or_else(|e| panic!("fixture file {} is corrupt: {e}", path.display()))
     }
 
     /// Persist to `path` as pretty-printed JSON.
@@ -349,7 +349,10 @@ async fn read_request(
             let k = k.trim().to_lowercase();
             let v = v.trim().to_string();
             if k == "content-length" {
-                content_length = v.parse().unwrap_or(0);
+                content_length = v.parse().unwrap_or_else(|_| {
+                    tracing::warn!("forge-fixture: invalid content-length {:?}, defaulting to 0", v);
+                    0
+                });
             }
             headers.push((k, v));
         }
@@ -403,6 +406,9 @@ fn reason_phrase(status: u16) -> &'static str {
         406 => "Not Acceptable",
         409 => "Conflict",
         422 => "Unprocessable Entity",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
         _ => "Unknown",
     }
 }
