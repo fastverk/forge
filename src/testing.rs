@@ -27,7 +27,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
@@ -418,5 +418,142 @@ impl FakeForge {
                 .is_some_and(|c| c.auto_merge))
         })
         .unwrap_or(false)
+    }
+
+    /// Directly insert a change into `slug`'s change list. Useful in gateway
+    /// tests that need a change to already exist without going through
+    /// [`ForgeService::open_change`].
+    pub fn seed_change(&self, slug: &str, number: u64, head: &str, base: &str) {
+        let mut repos = self.repos.lock().unwrap();
+        let repo = repos.entry(slug.to_string()).or_default();
+        repo.changes.push(FakeChange {
+            number,
+            head: head.to_string(),
+            base: base.to_string(),
+            state: ChangeState::Open,
+            auto_merge: false,
+            ci: CiStatus::None,
+            merge_sha: String::new(),
+        });
+    }
+}
+
+// ── Arc<FakeForge> as a shareable Forge ─────────────────────────────────────
+
+/// `Arc<FakeForge>` implements [`Forge`] by delegating to the inner value.
+///
+/// This allows gateway tests to hold an `Arc<FakeForge>` to both:
+/// 1. Configure the fake (e.g. `fail_next`, `seed_change`) before the RPC, and
+/// 2. Inspect its state afterwards — while the gateway itself receives a
+///    `Box<dyn Forge>` (boxed `Arc<FakeForge>`) from [`FakeForgeFactory`].
+#[async_trait]
+impl Forge for Arc<FakeForge> {
+    fn kind(&self) -> ForgeKind {
+        (**self).kind()
+    }
+    async fn default_branch(&self, repo: &RepoRef) -> ForgeResult<String> {
+        (**self).default_branch(repo).await
+    }
+    async fn read_file(
+        &self,
+        repo: &RepoRef,
+        path: &str,
+        r#ref: &str,
+    ) -> ForgeResult<Option<FileBlob>> {
+        (**self).read_file(repo, path, r#ref).await
+    }
+    async fn create_branch(
+        &self,
+        repo: &RepoRef,
+        name: &str,
+        from_ref: &str,
+    ) -> ForgeResult<BranchOutcome> {
+        (**self).create_branch(repo, name, from_ref).await
+    }
+    async fn commit_file(
+        &self,
+        repo: &RepoRef,
+        branch: &str,
+        path: &str,
+        content: &str,
+        blob_sha: &str,
+        message: &str,
+    ) -> ForgeResult<String> {
+        (**self)
+            .commit_file(repo, branch, path, content, blob_sha, message)
+            .await
+    }
+    async fn open_change(
+        &self,
+        repo: &RepoRef,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        remove_source_branch: bool,
+    ) -> ForgeResult<OpenedChange> {
+        (**self)
+            .open_change(repo, head, base, title, body, remove_source_branch)
+            .await
+    }
+    async fn enable_auto_merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<bool> {
+        (**self).enable_auto_merge(repo, change).await
+    }
+    async fn pipeline_status(
+        &self,
+        repo: &RepoRef,
+        change: &ChangeRef,
+    ) -> ForgeResult<PipelineStatus> {
+        (**self).pipeline_status(repo, change).await
+    }
+    async fn merge(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<String> {
+        (**self).merge(repo, change).await
+    }
+    async fn change_state(&self, repo: &RepoRef, change: &ChangeRef) -> ForgeResult<ChangeState> {
+        (**self).change_state(repo, change).await
+    }
+    async fn list_triggers(&self, repo: &RepoRef) -> ForgeResult<Vec<Trigger>> {
+        (**self).list_triggers(repo).await
+    }
+    async fn ensure_trigger(
+        &self,
+        repo: &RepoRef,
+        url: &str,
+        events: &[String],
+        secret: &str,
+    ) -> ForgeResult<EnsuredTrigger> {
+        (**self).ensure_trigger(repo, url, events, secret).await
+    }
+}
+
+// ── FakeForgeFactory ─────────────────────────────────────────────────────────
+
+/// A [`crate::gateway::ForgeFactory`] that always returns the same
+/// `Arc<FakeForge>`, bypassing auth checks. Gateway tests use this to drive
+/// the RPC dispatch layer with an in-memory forge double.
+///
+/// # Example
+///
+/// ```ignore
+/// use std::sync::Arc;
+/// use forge::testing::{FakeForge, FakeForgeFactory};
+/// use forge::{ForgeKind, RepoRef};
+/// use forge::gateway::ForgeGateway;
+///
+/// let fake = Arc::new(FakeForge::new(ForgeKind::Gitlab));
+/// fake.seed_repo("acme/widgets", "main");
+/// let gw = ForgeGateway::with_factory(Box::new(FakeForgeFactory(Arc::clone(&fake))));
+/// // … call gateway methods and assert via `fake` …
+/// ```
+pub struct FakeForgeFactory(pub Arc<FakeForge>);
+
+impl crate::gateway::ForgeFactory for FakeForgeFactory {
+    #[allow(clippy::result_large_err)]
+    fn build(
+        &self,
+        _repo: &RepoRef,
+        _meta: &tonic::metadata::MetadataMap,
+    ) -> Result<Box<dyn Forge>, tonic::Status> {
+        Ok(Box::new(Arc::clone(&self.0)))
     }
 }

@@ -37,20 +37,32 @@ const GITLAB_HOST_META: &str = "x-fastverk-gitlab-host";
 /// Metadata key carrying the caller's GitHub token.
 const GITHUB_TOKEN_META: &str = "x-fastverk-github-token";
 
-/// The `forge.v1.ForgeService` implementation.
-#[derive(Default)]
-pub struct ForgeGateway {}
+/// A seam for building the per-request forge adapter from a repo ref and the
+/// caller's metadata credentials. Implement this trait to inject a test double
+/// (e.g. `forge::testing::FakeForge`) without touching the live adapter code.
+///
+/// The default production implementation is [`DefaultForgeFactory`].
+pub trait ForgeFactory: Send + Sync {
+    /// Construct a [`Forge`] adapter for `repo`, extracting whatever credentials
+    /// are needed from `meta`. Returns a gRPC [`Status`] error when a required
+    /// credential is absent or the forge kind is unsupported.
+    ///
+    // `tonic::Status` is an opaque external type that cannot be made smaller;
+    // boxing it would require every call site to `map_err(|e| *e)` after each
+    // `?` with no practical benefit — the stack frame lives only for the
+    // duration of a single RPC dispatch.
+    #[allow(clippy::result_large_err)]
+    fn build(&self, repo: &RepoRef, meta: &MetadataMap) -> Result<Box<dyn Forge>, Status>;
+}
 
-impl ForgeGateway {
-    /// Wrap the gateway in its tonic server, ready to `add_service`.
-    pub fn into_server(self) -> ForgeServiceServer<Self> {
-        ForgeServiceServer::new(self)
-    }
+/// The production [`ForgeFactory`]: builds a [`GitLabForge`] or [`GitHubForge`]
+/// from the caller's request metadata, exactly as `ForgeGateway` used to do
+/// inline before the seam was extracted.
+pub struct DefaultForgeFactory;
 
-    /// Build the per-request forge adapter for `repo` from the caller's metadata
-    /// credentials. GitLab uses `RepoRef.host` (else the metadata host); GitHub
-    /// needs only the token.
-    fn adapter(&self, repo: &RepoRef, meta: &MetadataMap) -> Result<Box<dyn Forge>, Status> {
+impl ForgeFactory for DefaultForgeFactory {
+    #[allow(clippy::result_large_err)]
+    fn build(&self, repo: &RepoRef, meta: &MetadataMap) -> Result<Box<dyn Forge>, Status> {
         match ForgeKind::try_from(repo.forge).unwrap_or(ForgeKind::Unspecified) {
             ForgeKind::Gitlab => {
                 let token = meta_str(meta, GITLAB_TOKEN_META)
@@ -61,7 +73,9 @@ impl ForgeGateway {
                     repo.host.clone()
                 };
                 if host.is_empty() {
-                    return Err(Status::invalid_argument("gitlab host required (repo.host or metadata)"));
+                    return Err(Status::invalid_argument(
+                        "gitlab host required (repo.host or metadata)",
+                    ));
                 }
                 Ok(Box::new(GitLabForge::new(host, token).map_err(to_status)?))
             }
@@ -70,10 +84,47 @@ impl ForgeGateway {
                     .ok_or_else(|| Status::unauthenticated("missing github token"))?;
                 Ok(Box::new(GitHubForge::new(token).map_err(to_status)?))
             }
-            ForgeKind::Unspecified => {
-                Err(Status::invalid_argument("repo.forge must be FORGE_GITLAB or FORGE_GITHUB"))
-            }
+            ForgeKind::Unspecified => Err(Status::invalid_argument(
+                "repo.forge must be FORGE_GITLAB or FORGE_GITHUB",
+            )),
         }
+    }
+}
+
+/// The `forge.v1.ForgeService` implementation.
+pub struct ForgeGateway {
+    factory: Box<dyn ForgeFactory>,
+}
+
+impl Default for ForgeGateway {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ForgeGateway {
+    /// Create a gateway backed by the production [`DefaultForgeFactory`].
+    pub fn new() -> Self {
+        Self {
+            factory: Box::new(DefaultForgeFactory),
+        }
+    }
+
+    /// Create a gateway backed by a custom factory (e.g. a test double).
+    pub fn with_factory(factory: Box<dyn ForgeFactory>) -> Self {
+        Self { factory }
+    }
+
+    /// Wrap the gateway in its tonic server, ready to `add_service`.
+    pub fn into_server(self) -> ForgeServiceServer<Self> {
+        ForgeServiceServer::new(self)
+    }
+
+    /// Build the per-request forge adapter for `repo` from the caller's metadata
+    /// credentials. Delegates to the injected [`ForgeFactory`].
+    #[allow(clippy::result_large_err)]
+    fn adapter(&self, repo: &RepoRef, meta: &MetadataMap) -> Result<Box<dyn Forge>, Status> {
+        self.factory.build(repo, meta)
     }
 }
 
@@ -224,7 +275,10 @@ impl ForgeService for ForgeGateway {
         let change = msg
             .change
             .ok_or_else(|| Status::invalid_argument("change is required"))?;
-        let state = forge.change_state(&repo, &change).await.map_err(to_status)?;
+        let state = forge
+            .change_state(&repo, &change)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(GetChangeStateResponse {
             state: state as i32,
             // The trait reports state only; the merge sha is available via Merge.
