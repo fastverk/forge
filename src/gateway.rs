@@ -61,7 +61,9 @@ impl ForgeGateway {
                     repo.host.clone()
                 };
                 if host.is_empty() {
-                    return Err(Status::invalid_argument("gitlab host required (repo.host or metadata)"));
+                    return Err(Status::invalid_argument(
+                        "gitlab host required (repo.host or metadata)",
+                    ));
                 }
                 Ok(Box::new(GitLabForge::new(host, token).map_err(to_status)?))
             }
@@ -70,9 +72,16 @@ impl ForgeGateway {
                     .ok_or_else(|| Status::unauthenticated("missing github token"))?;
                 Ok(Box::new(GitHubForge::new(token).map_err(to_status)?))
             }
-            ForgeKind::Unspecified => {
-                Err(Status::invalid_argument("repo.forge must be FORGE_GITLAB or FORGE_GITHUB"))
-            }
+            // The contract knows about geetch; this gateway does not serve it
+            // yet (the GeetchForge adapter is still to be written). Say exactly
+            // that. Falling through to another adapter would dial the wrong
+            // host with the wrong credential and report a plausible failure.
+            ForgeKind::Geetch => Err(Status::unimplemented(
+                "repo.forge = FORGE_GEETCH: the geetch adapter is not wired into forge-gateway yet",
+            )),
+            ForgeKind::Unspecified => Err(Status::invalid_argument(
+                "repo.forge must be one of FORGE_GITHUB, FORGE_GITLAB, FORGE_GEETCH",
+            )),
         }
     }
 }
@@ -224,7 +233,10 @@ impl ForgeService for ForgeGateway {
         let change = msg
             .change
             .ok_or_else(|| Status::invalid_argument("change is required"))?;
-        let state = forge.change_state(&repo, &change).await.map_err(to_status)?;
+        let state = forge
+            .change_state(&repo, &change)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(GetChangeStateResponse {
             state: state as i32,
             // The trait reports state only; the merge sha is available via Merge.

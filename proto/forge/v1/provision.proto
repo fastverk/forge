@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+// forge.v1 provisioning — creating and configuring repositories, as opposed to
+// reading and writing the ones that already exist.
+//
+// # Why this is a SEPARATE service, not more RPCs on ForgeService
+//
+// ForgeService is documented as holding no credential of its own: the caller's
+// token travels in request metadata and every operation runs as the caller
+// (see gateway.rs). That is a deliberate security property.
+//
+// Provisioning cannot work that way. Creating a repository, setting branch
+// protection, or wiring event delivery needs a PRIVILEGED identity that the
+// server itself holds — an org admin, a group owner, a workload role. Serving
+// both from one daemon means one compromise yields both, and it would type every
+// `Box<dyn Forge>` in a developer CLI as capable of deleting repositories.
+//
+// So: separate service, separate trait, separate binary, separate identity.
+//
+// # Idempotence
+//
+// Every `Ensure*` converges rather than creates: calling it against the desired
+// state is a no-op success. The caller is a reconcile loop, not a one-shot.
+package forge.v1;
+
+import "forge/v1/forge.proto";
+
+// Who may see a repository. Not every forge has all of these — an adapter that
+// cannot express a level MUST reject it rather than silently substitute a
+// different one. A caller who believes they created a public repo and did not
+// will publish a clone URL nobody can use.
+enum Visibility {
+  VISIBILITY_UNSPECIFIED = 0;
+  VISIBILITY_PRIVATE = 1;
+  VISIBILITY_INTERNAL = 2;
+  VISIBILITY_PUBLIC = 3;
+}
+
+enum RepoLifecycle {
+  REPO_LIFECYCLE_UNSPECIFIED = 0;
+  REPO_LIFECYCLE_ACTIVE = 1;
+  REPO_LIFECYCLE_ARCHIVED = 2;
+}
+
+// The desired state of a repository.
+message RepoSpec {
+  string description = 1;
+  Visibility visibility = 2;
+  // Empty ⇒ "main".
+  string default_branch = 3;
+  // Seed a first commit so the default branch EXISTS.
+  //
+  // Default TRUE at every call site, because most of the contract is
+  // meaningless on an empty repository: there is no commit to branch from and
+  // no tree to read. An unseeded repo is a footgun that surfaces two calls later.
+  bool initialize = 4;
+  map<string, string> tags = 5;
+}
+
+message ProvisionedRepo {
+  RepoRef repo = 1;
+  string clone_url_http = 2;
+  string clone_url_ssh = 3;
+  string web_url = 4;
+  string default_branch = 5;
+  RepoLifecycle lifecycle = 6;
+  // The forge's own identifier (node id / project id / repository id).
+  string forge_id = 7;
+}
+
+// Desired protection for one branch.
+message ProtectionSpec {
+  uint32 required_approvals = 1;
+  bool dismiss_stale_approvals = 2;
+  bool require_linear_history = 3;
+  bool block_force_push = 4;
+  bool block_deletion = 5;
+  repeated string required_checks = 6;
+}
+
+message Protection {
+  string branch = 1;
+  // What the forge actually enforces after the call.
+  ProtectionSpec effective = 2;
+  // Fields of the request this forge CANNOT honor.
+  //
+  // Load-bearing. Forges differ sharply here — some have no status checks to
+  // require, some enforce force-push bans through an out-of-band policy rather
+  // than an API. An adapter reports what it could not do instead of returning
+  // success and leaving the caller believing a branch is protected when it is
+  // not. Silence here is a security bug, not a cosmetic one.
+  repeated string unsupported = 3;
+  string forge_id = 4;
+}
+
+// ── delivery ──────────────────────────────────────────────────────────
+//
+// The forge-neutral "wire this repo's events to us". A webhook on forges that
+// have them; something else on forges that don't.
+
+message WebhookSink {
+  string url = 1;
+  // Verification secret; empty ⇒ leave unset.
+  string secret = 2;
+}
+
+// Delivery to a message bus rather than an HTTP endpoint.
+message BusSink {
+  // The bus / topic / stream to publish on.
+  string bus = 1;
+  // The subscriber the bus should reach, when the forge needs it named
+  // explicitly rather than inferring it.
+  string target = 2;
+  // Adapter-assigned name for the rule/subscription; empty ⇒ derived.
+  string rule_name = 3;
+}
+
+message DeliverySink {
+  oneof target {
+    WebhookSink webhook = 1;
+    BusSink bus = 2;
+  }
+  // Normalized event names ("push", "pull_request"); empty ⇒ adapter default.
+  repeated string events = 3;
+}
+
+message Delivery {
+  string id = 1;
+  DeliverySink sink = 2;
+  bool active = 3;
+}
+
+message EnsuredDelivery {
+  Delivery delivery = 1;
+  // False when an equivalent delivery already existed (idempotent re-run).
+  bool created = 2;
+}
+
+// ── requests / responses ──────────────────────────────────────────────
+
+message EnsureRepoRequest {
+  RepoRef repo = 1;
+  RepoSpec spec = 2;
+}
+message EnsureRepoResponse {
+  ProvisionedRepo repo = 1;
+  bool created = 2;
+}
+
+message DescribeRepoRequest { RepoRef repo = 1; }
+message DescribeRepoResponse {
+  ProvisionedRepo repo = 1;
+  bool found = 2;
+}
+
+message ArchiveRepoRequest { RepoRef repo = 1; }
+message ArchiveRepoResponse {}
+
+message DeleteRepoRequest {
+  RepoRef repo = 1;
+  // Must equal `repo.name`. A destructive call should be hard to make by
+  // accident, and not every forge has a recycle bin to undo it from.
+  string confirm_name = 2;
+}
+message DeleteRepoResponse {}
+
+message EnsureProtectionRequest {
+  RepoRef repo = 1;
+  string branch = 2;
+  ProtectionSpec spec = 3;
+}
+message EnsureProtectionResponse { Protection protection = 1; }
+
+message DescribeProtectionRequest {
+  RepoRef repo = 1;
+  string branch = 2;
+}
+message DescribeProtectionResponse {
+  Protection protection = 1;
+  bool found = 2;
+}
+
+message EnsureDeliveryRequest {
+  RepoRef repo = 1;
+  DeliverySink sink = 2;
+}
+message EnsureDeliveryResponse { EnsuredDelivery delivery = 1; }
+
+message ListDeliveriesRequest { RepoRef repo = 1; }
+message ListDeliveriesResponse { repeated Delivery deliveries = 1; }
+
+message RemoveDeliveryRequest {
+  RepoRef repo = 1;
+  string id = 2;
+}
+message RemoveDeliveryResponse {}
+
+// Repository lifecycle + configuration. Served by a daemon holding a PRIVILEGED
+// identity — deliberately not co-served with ForgeService.
+service ForgeProvisionService {
+  rpc EnsureRepo(EnsureRepoRequest) returns (EnsureRepoResponse);
+  rpc DescribeRepo(DescribeRepoRequest) returns (DescribeRepoResponse);
+  rpc ArchiveRepo(ArchiveRepoRequest) returns (ArchiveRepoResponse);
+  rpc DeleteRepo(DeleteRepoRequest) returns (DeleteRepoResponse);
+
+  rpc EnsureProtection(EnsureProtectionRequest) returns (EnsureProtectionResponse);
+  rpc DescribeProtection(DescribeProtectionRequest) returns (DescribeProtectionResponse);
+
+  rpc EnsureDelivery(EnsureDeliveryRequest) returns (EnsureDeliveryResponse);
+  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse);
+  rpc RemoveDelivery(RemoveDeliveryRequest) returns (RemoveDeliveryResponse);
+}

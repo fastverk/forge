@@ -16,10 +16,21 @@ syntax = "proto3";
 package forge.v1;
 
 // Which forge a repo lives on.
+//
+// APPEND only — never renumber. Consumers persist these values (BuildRun,
+// RepoBuild, RepoReadiness all carry the forge on a CRD), so a renumber
+// silently reinterprets stored records.
+//
+// A consumer that does not recognize a value MUST reject rather than fall back
+// to a default. plugin-forge used to answer "gitlab" for anything that was not
+// GitHub, which was harmless with two forges and became a wrong-API status write
+// with three.
 enum Forge {
   FORGE_UNSPECIFIED = 0;
   FORGE_GITHUB = 1;
   FORGE_GITLAB = 2;
+  // geetch — the platform's own API-only forge (fastverk/geetch).
+  FORGE_GEETCH = 3;
 }
 
 // A repository on a forge. `owner` is the GitHub org/user or the GitLab
@@ -35,11 +46,21 @@ message RepoRef {
 // A change request: a GitHub pull request or a GitLab merge request.
 message ChangeRef {
   // GitHub PR number / GitLab MR iid.
+  //
+  // Numeric because both forges that existed when this was written use integers.
+  // Prefer `id` when it is non-empty — see below.
   uint64 number = 1;
   // Web URL.
   string url = 2;
   // Head/source branch.
   string branch = 3;
+  // The forge's OWN change identifier, verbatim, when it is not an integer.
+  //
+  // Not every forge numbers changes. Rather than widen `number` to a string —
+  // which would break both working adapters and the gateway for no gain — an
+  // adapter with a non-numeric id fills this and sets `number` best-effort.
+  // Consumers should read `id` when non-empty and fall back to `number`.
+  string id = 4;
 }
 
 // A file's contents + the opaque id needed to update it.
@@ -170,6 +191,14 @@ message Trigger {
   repeated string events = 3;
   // Whether the hook is active.
   bool active = 4;
+  // Where deliveries actually go, when that is not an HTTPS URL.
+  //
+  // `url` assumes every forge delivers by POSTing to an endpoint. Not all do —
+  // a forge may deliver to a message bus or an internal subscriber, in which
+  // case `url` is empty and this carries the real target (a queue name, an ARN,
+  // a service address). An adapter that cannot express its delivery as a URL
+  // must fill this rather than inventing a plausible-looking one.
+  string target = 5;
 }
 
 message ListTriggersRequest { RepoRef repo = 1; }
