@@ -28,6 +28,15 @@ pub mod provision;
 #[cfg(feature = "testing")]
 pub mod testing;
 
+// The conformance suite — the executable specification every adapter is held to.
+// Also behind `testing`, and for the same reason one level up: it began in
+// `tests/conformance.rs`, and Rust integration tests are not importable by other
+// crates, so an out-of-crate adapter could not run the shared battery. geetch's
+// B2 hit that wall and copied all eight cases into its own repo — which proves
+// nothing about the shared contract, because a copy drifts.
+#[cfg(feature = "testing")]
+pub mod conformance;
+
 pub use pb::{ChangeRef, ChangeState, CiStatus, FileBlob, Forge as ForgeKind, RepoRef, Trigger};
 
 /// A forge operation error. A concrete type (not `anyhow`) so the public `Forge`
