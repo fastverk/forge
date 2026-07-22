@@ -41,17 +41,18 @@ use crate::pb::{
     forge_service_client::ForgeServiceClient, ArchiveRepoRequest, CommitFileRequest,
     CreateBranchRequest, DeleteRepoRequest, DescribeProtectionRequest, DescribeRepoRequest,
     EnableAutoMergeRequest, EnsureDeliveryRequest, EnsureProtectionRequest, EnsureRepoRequest,
-    EnsureTriggerRequest, GetChangeStateRequest, GetDefaultBranchRequest, ListDeliveriesRequest,
-    ListTriggersRequest, MergeRequest, OpenChangeRequest, PipelineStatusRequest, ReadFileRequest,
-    RemoveDeliveryRequest,
+    EnsureTriggerRequest, GetCapabilitiesRequest, GetChangeStateRequest, GetDefaultBranchRequest,
+    ListDeliveriesRequest, ListTriggersRequest, MergeRequest, OpenChangeRequest,
+    PipelineStatusRequest, ReadFileRequest, RemoveDeliveryRequest,
 };
 use crate::provision::{
     Delivery, DeliverySink, EnsuredDelivery, EnsuredRepo, ForgeProvisioner, Protection,
     ProtectionSpec, ProvisionedRepo, RepoSpec,
 };
 use crate::{
-    BranchOutcome, ChangeRef, ChangeState, CiStatus, EnsuredTrigger, FileBlob, Forge, ForgeError,
-    ForgeKind, ForgeResult, OpenedChange, PipelineStatus, RepoRef, Trigger,
+    BranchOutcome, ChangeRef, ChangeState, CiStatus, EnsuredTrigger, FileBlob, Forge,
+    ForgeCapabilities, ForgeError, ForgeKind, ForgeResult, OpenedChange, PipelineStatus, RepoRef,
+    Trigger,
 };
 
 /// A gRPC status becomes a [`ForgeError`] carrying the server's message. The
@@ -314,6 +315,36 @@ impl Forge for GeetchForge {
             trigger: r.trigger.unwrap_or_default(),
             created: r.created,
         })
+    }
+
+    /// Ask the remote, because a passthrough must not answer for it. `repo` is a
+    /// bare forge selector — GetCapabilities reads only `forge`/`host`.
+    ///
+    /// One fallback: a geetchd built against forge 0.0.3 has no GetCapabilities
+    /// and answers UNIMPLEMENTED. That is not "capabilities unknown", it is an
+    /// older server whose capability set we already know — geetch's README puts
+    /// issues, wiki, CI and a package registry explicitly out of scope, and it
+    /// serves triggers. So UNIMPLEMENTED (and only UNIMPLEMENTED) degrades to
+    /// that documented set; every other status propagates, because a dead
+    /// connection must not read as "has nothing".
+    async fn capabilities(&self) -> ForgeResult<ForgeCapabilities> {
+        match self
+            .client()
+            .get_capabilities(GetCapabilitiesRequest {
+                repo: Some(RepoRef {
+                    forge: ForgeKind::Geetch as i32,
+                    ..Default::default()
+                }),
+            })
+            .await
+        {
+            Ok(r) => Ok(r.into_inner().capabilities.unwrap_or_default()),
+            Err(s) if s.code() == tonic::Code::Unimplemented => Ok(ForgeCapabilities {
+                triggers: true,
+                ..Default::default()
+            }),
+            Err(s) => Err(err(s)),
+        }
     }
 }
 

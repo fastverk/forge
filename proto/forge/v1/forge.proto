@@ -15,6 +15,14 @@ syntax = "proto3";
 
 package forge.v1;
 
+// The write-back and discovery RPCs folded into ForgeService below reuse the
+// messages those surfaces already defined, rather than restating them:
+//   events.proto    — SetCheckRequest / CommentRequest / SetDeploymentRequest / WriteAck
+//   discovery.proto — Repository / Issue / PullRequest and the List*Response types
+// Acyclic: events.proto imports discovery.proto, and neither imports this file.
+import "forge/v1/events.proto";
+import "forge/v1/discovery.proto";
+
 // Which forge a repo lives on.
 //
 // APPEND only — never renumber. Consumers persist these values (BuildRun,
@@ -220,6 +228,67 @@ message EnsureTriggerResponse {
   bool created = 2;
 }
 
+// ── capabilities ──────────────────────────────────────────────────────────
+//
+// What a forge actually PROVIDES, asked BEFORE anything is attempted.
+//
+// The contract already has a way to be honest about an unsupported operation
+// after the fact — `Protection.unsupported` reports the ProtectionSpec fields a
+// forge could not honor. That is the right shape for a partially-honored write.
+// It is the wrong shape for "does this forge have issues at all", because it
+// only answers after a caller has already asked, and the caller then has to
+// decide whether an error means "absent" or "broken".
+//
+// geetch is the case that forces this: it has no issue tracker and never will
+// (its README lists issues, wiki, CI and a package registry as explicitly out of
+// scope). A cross-forge `ListIssues` fan-out that dispatches to every configured
+// forge and treats geetch's failure as an error is wrong twice over — it does
+// work that cannot succeed, and it reports a fault where there is none. With
+// capabilities the fan-out simply does not ask.
+message ForgeCapabilities {
+  // Every ForgeService implementation provides the CORE surface — default
+  // branch, file read/write, branches, changes, merge. There is no flag for it:
+  // a forge that cannot do those is not a forge, and a bool nobody can set to
+  // false is just noise.
+  //
+  // These flags cover the OPTIONAL surfaces, and default to FALSE on purpose.
+  // An adapter built against an older contract does not know a newly-added
+  // capability and will report it absent, so a caller skips a surface that might
+  // have worked. The other default fails the other way — attempting a surface
+  // that does not exist — which is the failure this message exists to remove.
+  bool issues = 1;
+  // Inbound triggers/webhooks: ListTriggers / EnsureTrigger.
+  bool triggers = 2;
+  // Commit checks / statuses: SetCheck.
+  bool checks = 3;
+  // Deployments + environments: SetDeployment.
+  bool deployments = 4;
+  // Comments on a change or issue: Comment.
+  bool comments = 5;
+  // Surfaces the contract describes but does not yet act on. Declared so a
+  // console can render what a forge offers without a per-forge special case;
+  // add the RPCs later without changing this message.
+  bool wiki = 6;
+  bool pages = 7;
+  bool releases = 8;
+  bool packages = 9;
+}
+
+message GetCapabilitiesRequest {
+  // Selects the forge to describe; only `forge` and `host` are read. Repo-level
+  // fields are ignored — a per-repo toggle (GitHub lets an individual repo turn
+  // issues off) belongs on `Repository`, not here.
+  //
+  // The answer describes the ADAPTER the server would route to, not the forge
+  // product. "GitHub has an issue tracker" is true and useless; what a caller
+  // needs is whether THIS server will answer ListIssues for it. Only the
+  // adapter-scoped reading makes skipping a surface safe, which is the point.
+  RepoRef repo = 1;
+}
+message GetCapabilitiesResponse {
+  ForgeCapabilities capabilities = 1;
+}
+
 // The generic forge service. GitHub + GitLab adapters implement these.
 service ForgeService {
   rpc GetDefaultBranch(GetDefaultBranchRequest) returns (GetDefaultBranchResponse);
@@ -234,4 +303,119 @@ service ForgeService {
   // Inbound trigger (webhook) management.
   rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
   rpc EnsureTrigger(EnsureTriggerRequest) returns (EnsureTriggerResponse);
+
+  // What this forge provides. Ask before attempting an optional surface; see
+  // ForgeCapabilities.
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+
+  // ── write-back (was the separate forge.v1.ForgeWrite service) ─────────────
+  //
+  // Reporting build/deploy state back to the forge that triggered it. These are
+  // per-REPO operations routed exactly like every RPC above, which is why they
+  // fold in cleanly: a commit status belongs to one repo on one forge.
+  //
+  // ForgeWrite remains defined in events.proto for existing servers. New callers
+  // should use these; the two are the same operations, not competing ones.
+  //
+  // They take their own request messages rather than ForgeWrite's, for the same
+  // routing reason as the discovery RPCs below: ForgeWrite's SetCheckRequest
+  // addresses a `Repository`, whose `forge` is the STRING "github"/"gitlab",
+  // and its CommentRequest carries no repo at all — only "owner/name#42". Both
+  // are routable when the server was configured for one forge up front, which is
+  // how the plugin backend works; neither is routable by a service that picks an
+  // adapter per request. WriteAck is shared unchanged — a response carries no
+  // routing.
+  rpc SetCheck(ForgeSetCheckRequest) returns (WriteAck);
+  rpc Comment(ForgeCommentRequest) returns (WriteAck);
+  rpc SetDeployment(ForgeSetDeploymentRequest) returns (WriteAck);
+
+  // ── discovery, PER FORGE (cf. the cross-forge forge.v1.ForgeDiscovery) ─────
+  //
+  // These answer for THIS forge only, and deliberately take different request
+  // messages than ForgeDiscovery's: those carry a `repeated string forges`
+  // filter because they AGGREGATE across every configured forge, which cannot
+  // mean anything in a service routed by a single RepoRef.
+  //
+  // So the split is by layer, not by duplication: ForgeService answers "what
+  // does THIS forge have", ForgeDiscovery fans out over several ForgeService
+  // backends and concatenates. Folding the aggregating form in here would have
+  // put a multi-forge request into a per-forge service and left the routing
+  // undefined.
+  //
+  // Gate these on ForgeCapabilities: `ListIssues` against a forge with
+  // `issues = false` is a question with no answer, not a failure.
+  rpc ListRepos(ListForgeReposRequest) returns (ListReposResponse);
+  rpc ListIssues(ListForgeIssuesRequest) returns (ListIssuesResponse);
+  rpc ListPullRequests(ListForgePullRequestsRequest) returns (ListPullRequestsResponse);
+}
+
+// Per-forge write-back requests. Same fields as ForgeWrite's, with the repo
+// addressed by RepoRef (forge as the ENUM, so the server can route) instead of
+// by a Repository whose `forge` is a bare string.
+message ForgeSetCheckRequest {
+  RepoRef repo = 1;
+  // The commit the check reports on.
+  string head_sha = 2;
+  // Check name, e.g. "fastverk/build".
+  string name = 3;
+  // queued|in_progress|completed.
+  string status = 4;
+  // success|failure|neutral|cancelled ("" while still running).
+  string conclusion = 5;
+  // Where a human goes for detail.
+  string details_url = 6;
+}
+
+message ForgeCommentRequest {
+  RepoRef repo = 1;
+  // The change or issue NUMBER within `repo`. ForgeWrite's "owner/name#42" packs
+  // repo and number into one string because it had nowhere else to put the repo;
+  // with `repo` present the number stands alone and nothing has to be parsed.
+  uint64 number = 2;
+  string body = 3;
+}
+
+message ForgeSetDeploymentRequest {
+  RepoRef repo = 1;
+  // The commit being deployed.
+  string head_sha = 2;
+  // e.g. "refs/heads/main".
+  string ref = 3;
+  // "production" | service name.
+  string environment = 4;
+  // queued|in_progress|success|failure|inactive.
+  string state = 5;
+  // The environment URL (the "Visit" link).
+  string url = 6;
+  // Optional details/log link.
+  string log_url = 7;
+  // Optional human-readable status line.
+  string description = 8;
+}
+
+// Per-forge discovery requests. Same shape as ForgeDiscovery's minus the
+// `forges` selector — the forge is already fixed by `repo`.
+message ListForgeReposRequest {
+  // Identifies the forge (and host). Repo-level fields are ignored.
+  RepoRef repo = 1;
+  // Restrict to these owners / namespaces. Empty = the forge's default.
+  repeated string owners = 2;
+  // Filter to repos with these labels/topics (best-effort).
+  repeated string labels = 3;
+}
+
+message ListForgeIssuesRequest {
+  RepoRef repo = 1;
+  repeated string owners = 2;
+  // Filter to issues with these labels (AND semantics).
+  repeated string labels = 3;
+  repeated string for_users = 4;
+}
+
+message ListForgePullRequestsRequest {
+  RepoRef repo = 1;
+  repeated string owners = 2;
+  repeated string labels = 3;
+  // Filter to PRs authored by these users.
+  repeated string for_users = 4;
 }

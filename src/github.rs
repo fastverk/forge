@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 
 use crate::{
     default_trigger_events, BranchOutcome, ChangeRef, ChangeState, CiStatus, EnsuredTrigger,
-    FileBlob, Forge, ForgeError, ForgeKind, ForgeResult, OpenedChange, PipelineStatus, RepoRef,
-    Trigger,
+    FileBlob, Forge, ForgeCapabilities, ForgeError, ForgeKind, ForgeResult, OpenedChange,
+    PipelineStatus, RepoRef, Trigger,
 };
 
 const B64: base64::engine::general_purpose::GeneralPurpose =
@@ -437,6 +437,22 @@ impl Forge for GitHubForge {
         Ok(EnsuredTrigger {
             trigger: gh_hook_to_trigger(&created),
             created: true,
+        })
+    }
+
+    /// Core + inbound triggers, and nothing else — an honest report of what THIS
+    /// adapter serves, not of what GitHub offers.
+    ///
+    /// GitHub does have issues, checks, deployments and the rest; this
+    /// adapter has not wired them (the implementations live in plugin-forge's
+    /// backend, which routes by configuration rather than per request). A caller
+    /// gating on this therefore skips surfaces GitHub could serve — the safe
+    /// direction. Each flag flips true in the commit that implements its method,
+    /// never before, or the flag becomes a promise the adapter cannot keep.
+    async fn capabilities(&self) -> ForgeResult<ForgeCapabilities> {
+        Ok(ForgeCapabilities {
+            triggers: true,
+            ..Default::default()
         })
     }
 }
