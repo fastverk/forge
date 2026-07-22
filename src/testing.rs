@@ -33,8 +33,8 @@ use async_trait::async_trait;
 
 use crate::{
     default_trigger_events, repo_slug, BranchOutcome, ChangeRef, ChangeState, CiStatus,
-    EnsuredTrigger, FileBlob, Forge, ForgeError, ForgeKind, ForgeResult, OpenedChange,
-    PipelineStatus, RepoRef, Trigger,
+    EnsuredTrigger, FileBlob, Forge, ForgeCapabilities, ForgeError, ForgeKind, ForgeResult,
+    OpenedChange, PipelineStatus, RepoRef, Trigger,
 };
 
 /// One change (PR/MR) in a [`FakeRepo`].
@@ -352,6 +352,19 @@ impl Forge for FakeForge {
                 .find(|c| c.number == change.number)
                 .map(|c| c.state)
                 .ok_or_else(|| ForgeError::msg(format!("no such change: {}", change.number)))
+        })
+    }
+
+    /// Exactly what the fake implements: core plus triggers.
+    ///
+    /// Kept in step with the methods below by hand, and deliberately so — the
+    /// double is where `declared_capabilities_are_served` gets a NON-vacuous
+    /// case. An all-false answer would satisfy that case without checking
+    /// anything, since its obligation only bites on a declared surface.
+    async fn capabilities(&self) -> ForgeResult<ForgeCapabilities> {
+        Ok(ForgeCapabilities {
+            triggers: true,
+            ..Default::default()
         })
     }
 

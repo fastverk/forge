@@ -274,6 +274,96 @@ pub async fn unsupported_is_explicit(fx: &dyn Fixture) {
     }
 }
 
+/// A declared capability must actually work — `capabilities()` is a promise,
+/// not a description.
+///
+/// The obligation is deliberately ONE-WAY. Declaring a surface obliges the
+/// adapter to serve it: a caller that gates on the flag and then calls must not
+/// be met with "not supported". Failing to declare a surface obliges nothing —
+/// under-reporting only costs a skipped call, and the trait's default is
+/// all-false precisely so an adapter written against an older contract
+/// under-reports rather than over-promises.
+///
+/// That asymmetry is the whole value of the flag. `ListIssues` against a forge
+/// with no issue tracker (geetch) is a question with no answer, not a failure;
+/// the caller learns that from `capabilities()` and never asks. This case checks
+/// the other half — that a `true` is never a lie — because an over-reporting
+/// adapter turns a safe skip back into the runtime error the flag exists to
+/// remove.
+pub async fn declared_capabilities_are_served(fx: &dyn Fixture) {
+    let (f, repo) = (fx.forge(), fx.repo());
+
+    let caps = match f.capabilities().await {
+        Ok(c) => c,
+        // "Could not ask" is a fixture/transport problem, not a contract
+        // violation — and is exactly what the trait says Err means.
+        Err(_) => return,
+    };
+
+    // The trait's default bodies all carry this phrase; an adapter that declares
+    // a surface must not be answering with one.
+    fn is_unsupported(e: &crate::ForgeError) -> bool {
+        e.to_string()
+            .contains("not supported by this forge adapter")
+    }
+
+    if caps.triggers {
+        if let Err(e) = f.list_triggers(&repo).await {
+            assert!(
+                !is_unsupported(&e),
+                "declared triggers = true but list_triggers reports unsupported"
+            );
+        }
+    }
+    if caps.issues {
+        if let Err(e) = f.list_issues(&[], &[], &[]).await {
+            assert!(
+                !is_unsupported(&e),
+                "declared issues = true but list_issues reports unsupported"
+            );
+        }
+    }
+    if caps.checks {
+        if let Err(e) = f
+            .set_check(&repo, "deadbeef", "ci", "completed", "success", "")
+            .await
+        {
+            assert!(
+                !is_unsupported(&e),
+                "declared checks = true but set_check reports unsupported"
+            );
+        }
+    }
+    if caps.comments {
+        if let Err(e) = f.comment(&repo, 1, "conformance").await {
+            assert!(
+                !is_unsupported(&e),
+                "declared comments = true but comment reports unsupported"
+            );
+        }
+    }
+    if caps.deployments {
+        if let Err(e) = f
+            .set_deployment(
+                &repo,
+                "deadbeef",
+                "refs/heads/main",
+                "prod",
+                "success",
+                "",
+                "",
+                "",
+            )
+            .await
+        {
+            assert!(
+                !is_unsupported(&e),
+                "declared deployments = true but set_deployment reports unsupported"
+            );
+        }
+    }
+}
+
 /// A transient failure must not corrupt state: the retry succeeds and leaves
 /// exactly one branch.
 pub async fn transient_failure_is_recoverable(fx: &dyn Fixture) {
@@ -322,6 +412,7 @@ macro_rules! conformance_suite {
             case!(merged_change_is_merged_not_closed);
             case!(ensure_trigger_is_idempotent_by_url);
             case!(unsupported_is_explicit);
+            case!(declared_capabilities_are_served);
             case!(transient_failure_is_recoverable);
         }
     };

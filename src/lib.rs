@@ -41,6 +41,10 @@ pub mod testing;
 pub mod conformance;
 
 pub use pb::{ChangeRef, ChangeState, CiStatus, FileBlob, Forge as ForgeKind, RepoRef, Trigger};
+// Optional-surface declaration + the discovery DTOs the folded-in read RPCs
+// return. `Issue`/`PullRequest`/`Repository` were defined in discovery.proto for
+// the cross-forge fan-out; the per-forge legs answer with the same types.
+pub use pb::{ForgeCapabilities, Issue, PullRequest, Repository};
 
 /// A forge operation error. A concrete type (not `anyhow`) so the public `Forge`
 /// API doesn't leak `anyhow` — which also lets consumers in a *different* crate
@@ -209,6 +213,127 @@ pub trait Forge: Send + Sync {
     ) -> ForgeResult<EnsuredTrigger> {
         Err(ForgeError::msg(
             "ensure_trigger not supported by this forge adapter",
+        ))
+    }
+
+    /// Which optional surfaces this adapter WILL SERVE — ask before attempting
+    /// one, instead of calling and interpreting the error.
+    ///
+    /// Scope is deliberately the ADAPTER, not the forge product. "GitHub has an
+    /// issue tracker" is true and useless here; what a caller needs to know is
+    /// whether *this* object will answer `list_issues`. Only the adapter-scoped
+    /// reading lets a caller skip a surface safely, which is the whole point.
+    /// So an adapter that targets a forge with issues but has not wired
+    /// `list_issues` reports `issues = false` — and flips it on in the same
+    /// commit that implements the method.
+    ///
+    /// The default declares NOTHING optional, which is the conservative
+    /// direction: an adapter that predates a capability is assumed not to have
+    /// it, so a caller skips a surface that might have worked. The opposite
+    /// default has callers attempt surfaces that cannot exist — the failure this
+    /// exists to remove.
+    ///
+    /// `Err` means "could not ask" (an unreachable remote), which is NOT the
+    /// same as "has nothing" — a passthrough adapter must not silently downgrade
+    /// a dead connection into an all-false answer.
+    ///
+    /// This describes the adapter, not one repository. A per-repo toggle (GitHub
+    /// lets an individual repo turn issues off) is a different question and
+    /// belongs on the repository.
+    async fn capabilities(&self) -> ForgeResult<ForgeCapabilities> {
+        Ok(ForgeCapabilities::default())
+    }
+
+    // ── write-back ────────────────────────────────────────────────────────────
+    //
+    // Reporting build/deploy state back to the forge. Per-repo, and defaulted
+    // unsupported for the same reason as the trigger methods above: an
+    // out-of-crate adapter written against an earlier contract still compiles.
+
+    /// Post a commit check / status. Returns a forge-specific detail string
+    /// (an id or URL) purely for logging.
+    async fn set_check(
+        &self,
+        _repo: &RepoRef,
+        _head_sha: &str,
+        _name: &str,
+        _status: &str,
+        _conclusion: &str,
+        _details_url: &str,
+    ) -> ForgeResult<String> {
+        Err(ForgeError::msg(
+            "set_check not supported by this forge adapter",
+        ))
+    }
+
+    /// Comment on change or issue `number` in `repo`.
+    async fn comment(&self, _repo: &RepoRef, _number: u64, _body: &str) -> ForgeResult<String> {
+        Err(ForgeError::msg(
+            "comment not supported by this forge adapter",
+        ))
+    }
+
+    /// Record a deployment / environment status — the "Environment · Ready ·
+    /// Visit" surface. `git_ref` is the deployed ref ("refs/heads/main"); `state`
+    /// is the forge-agnostic vocabulary
+    /// (queued|in_progress|success|failure|inactive), which the adapter maps.
+    #[allow(clippy::too_many_arguments)]
+    async fn set_deployment(
+        &self,
+        _repo: &RepoRef,
+        _head_sha: &str,
+        _git_ref: &str,
+        _environment: &str,
+        _state: &str,
+        _url: &str,
+        _log_url: &str,
+        _description: &str,
+    ) -> ForgeResult<String> {
+        Err(ForgeError::msg(
+            "set_deployment not supported by this forge adapter",
+        ))
+    }
+
+    // ── discovery, for THIS forge only ────────────────────────────────────────
+    //
+    // Each answers for the forge this adapter targets. Aggregating across several
+    // forges is a layer ABOVE the trait: it fans out over adapters and
+    // concatenates, which is why these take no `forges` selector. Gate them on
+    // `capabilities()` rather than calling and interpreting the error.
+
+    /// Repositories visible to this adapter under `owners` (empty = its default).
+    async fn list_repos(
+        &self,
+        _owners: &[String],
+        _labels: &[String],
+    ) -> ForgeResult<Vec<Repository>> {
+        Err(ForgeError::msg(
+            "list_repos not supported by this forge adapter",
+        ))
+    }
+
+    /// Open issues. A forge with no issue tracker reports `issues = false` from
+    /// [`Forge::capabilities`] and is simply not asked.
+    async fn list_issues(
+        &self,
+        _owners: &[String],
+        _labels: &[String],
+        _for_users: &[String],
+    ) -> ForgeResult<Vec<Issue>> {
+        Err(ForgeError::msg(
+            "list_issues not supported by this forge adapter",
+        ))
+    }
+
+    /// Open pull/merge requests (changes).
+    async fn list_pull_requests(
+        &self,
+        _owners: &[String],
+        _labels: &[String],
+        _for_users: &[String],
+    ) -> ForgeResult<Vec<PullRequest>> {
+        Err(ForgeError::msg(
+            "list_pull_requests not supported by this forge adapter",
         ))
     }
 }

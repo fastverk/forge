@@ -22,10 +22,13 @@ use crate::pb::forge_service_server::{ForgeService, ForgeServiceServer};
 use crate::pb::{
     CommitFileRequest, CommitFileResponse, CreateBranchRequest, CreateBranchResponse,
     EnableAutoMergeRequest, EnableAutoMergeResponse, EnsureTriggerRequest, EnsureTriggerResponse,
-    GetChangeStateRequest, GetChangeStateResponse, GetDefaultBranchRequest,
-    GetDefaultBranchResponse, ListTriggersRequest, ListTriggersResponse, MergeRequest,
-    MergeResponse, OpenChangeRequest, OpenChangeResponse, PipelineStatusRequest,
-    PipelineStatusResponse, ReadFileRequest, ReadFileResponse,
+    ForgeCommentRequest, ForgeSetCheckRequest, ForgeSetDeploymentRequest, GetCapabilitiesRequest,
+    GetCapabilitiesResponse, GetChangeStateRequest, GetChangeStateResponse,
+    GetDefaultBranchRequest, GetDefaultBranchResponse, ListForgeIssuesRequest,
+    ListForgePullRequestsRequest, ListForgeReposRequest, ListIssuesResponse,
+    ListPullRequestsResponse, ListReposResponse, ListTriggersRequest, ListTriggersResponse,
+    MergeRequest, MergeResponse, OpenChangeRequest, OpenChangeResponse, PipelineStatusRequest,
+    PipelineStatusResponse, ReadFileRequest, ReadFileResponse, WriteAck,
 };
 use crate::{Forge, ForgeError, ForgeKind, RepoRef};
 
@@ -267,6 +270,138 @@ impl ForgeService for ForgeGateway {
             created: out.created,
         }))
     }
+
+    async fn get_capabilities(
+        &self,
+        req: Request<GetCapabilitiesRequest>,
+    ) -> Result<Response<GetCapabilitiesResponse>, Status> {
+        let (forge, _repo, _msg) = adapter_for!(self, req);
+        let capabilities = forge.capabilities().await.map_err(to_status)?;
+        Ok(Response::new(GetCapabilitiesResponse {
+            capabilities: Some(capabilities),
+        }))
+    }
+
+    // ── write-back ────────────────────────────────────────────────────────────
+
+    async fn set_check(
+        &self,
+        req: Request<ForgeSetCheckRequest>,
+    ) -> Result<Response<WriteAck>, Status> {
+        let (forge, repo, msg) = adapter_for!(self, req);
+        let detail = forge
+            .set_check(
+                &repo,
+                &msg.head_sha,
+                &msg.name,
+                &msg.status,
+                &msg.conclusion,
+                &msg.details_url,
+            )
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(WriteAck { ok: true, detail }))
+    }
+
+    async fn comment(
+        &self,
+        req: Request<ForgeCommentRequest>,
+    ) -> Result<Response<WriteAck>, Status> {
+        let (forge, repo, msg) = adapter_for!(self, req);
+        let detail = forge
+            .comment(&repo, msg.number, &msg.body)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(WriteAck { ok: true, detail }))
+    }
+
+    async fn set_deployment(
+        &self,
+        req: Request<ForgeSetDeploymentRequest>,
+    ) -> Result<Response<WriteAck>, Status> {
+        let (forge, repo, msg) = adapter_for!(self, req);
+        let detail = forge
+            .set_deployment(
+                &repo,
+                &msg.head_sha,
+                &msg.r#ref,
+                &msg.environment,
+                &msg.state,
+                &msg.url,
+                &msg.log_url,
+                &msg.description,
+            )
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(WriteAck { ok: true, detail }))
+    }
+
+    // ── discovery, for the routed forge only ──────────────────────────────────
+    //
+    // Each checks `capabilities()` first and answers FAILED_PRECONDITION when the
+    // surface is absent. That is the distinction the capability flag buys: a
+    // forge without an issue tracker is not a broken forge, and a fan-out that
+    // asked anyway should be able to tell those apart without parsing a message.
+
+    async fn list_repos(
+        &self,
+        req: Request<ListForgeReposRequest>,
+    ) -> Result<Response<ListReposResponse>, Status> {
+        let (forge, _repo, msg) = adapter_for!(self, req);
+        let repos = forge
+            .list_repos(&msg.owners, &msg.labels)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(ListReposResponse { repos }))
+    }
+
+    async fn list_issues(
+        &self,
+        req: Request<ListForgeIssuesRequest>,
+    ) -> Result<Response<ListIssuesResponse>, Status> {
+        let (forge, _repo, msg) = adapter_for!(self, req);
+        require_capability(&*forge, "issues", |c| c.issues).await?;
+        let issues = forge
+            .list_issues(&msg.owners, &msg.labels, &msg.for_users)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(ListIssuesResponse { issues }))
+    }
+
+    async fn list_pull_requests(
+        &self,
+        req: Request<ListForgePullRequestsRequest>,
+    ) -> Result<Response<ListPullRequestsResponse>, Status> {
+        let (forge, _repo, msg) = adapter_for!(self, req);
+        let prs = forge
+            .list_pull_requests(&msg.owners, &msg.labels, &msg.for_users)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(ListPullRequestsResponse { prs }))
+    }
+}
+
+/// Reject an optional surface the routed adapter does not declare, BEFORE
+/// attempting it.
+///
+/// `FAILED_PRECONDITION`, not `UNIMPLEMENTED`: the RPC exists and this server
+/// serves it — it is the forge behind it that has no such surface. A caller that
+/// gated on [`Forge::capabilities`] never sees this; it is the backstop for one
+/// that did not, and it names the capability so the fix is obvious.
+async fn require_capability(
+    forge: &dyn Forge,
+    name: &str,
+    get: impl Fn(&crate::ForgeCapabilities) -> bool,
+) -> Result<(), Status> {
+    let caps = forge.capabilities().await.map_err(to_status)?;
+    if get(&caps) {
+        return Ok(());
+    }
+    Err(Status::failed_precondition(format!(
+        "{:?} does not provide `{name}` (ForgeCapabilities.{name} = false); \
+         call GetCapabilities before this RPC",
+        forge.kind(),
+    )))
 }
 
 /// Read a metadata value as a `String` (ASCII), if present and non-empty.

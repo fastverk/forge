@@ -12,8 +12,8 @@ use serde_json::json;
 
 use crate::{
     default_trigger_events, BranchOutcome, ChangeRef, ChangeState, CiStatus, EnsuredTrigger,
-    FileBlob, Forge, ForgeError, ForgeKind, ForgeResult, OpenedChange, PipelineStatus, RepoRef,
-    Trigger,
+    FileBlob, Forge, ForgeCapabilities, ForgeError, ForgeKind, ForgeResult, OpenedChange,
+    PipelineStatus, RepoRef, Trigger,
 };
 use serde_json::Value;
 
@@ -460,6 +460,22 @@ impl Forge for GitLabForge {
         Ok(EnsuredTrigger {
             trigger: gl_hook_to_trigger(&created),
             created: true,
+        })
+    }
+
+    /// Core + inbound triggers, and nothing else — an honest report of what THIS
+    /// adapter serves, not of what GitLab offers.
+    ///
+    /// GitLab does have issues, checks, deployments and the rest; this
+    /// adapter has not wired them (the implementations live in plugin-forge's
+    /// backend, which routes by configuration rather than per request). A caller
+    /// gating on this therefore skips surfaces GitLab could serve — the safe
+    /// direction. Each flag flips true in the commit that implements its method,
+    /// never before, or the flag becomes a promise the adapter cannot keep.
+    async fn capabilities(&self) -> ForgeResult<ForgeCapabilities> {
+        Ok(ForgeCapabilities {
+            triggers: true,
+            ..Default::default()
         })
     }
 }

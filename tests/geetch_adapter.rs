@@ -30,10 +30,14 @@ use forge::{
         forge_service_server::{ForgeService, ForgeServiceServer},
         CommitFileRequest, CommitFileResponse, CreateBranchRequest, CreateBranchResponse,
         EnableAutoMergeRequest, EnableAutoMergeResponse, EnsureTriggerRequest,
-        EnsureTriggerResponse, GetChangeStateRequest, GetChangeStateResponse,
-        GetDefaultBranchRequest, GetDefaultBranchResponse, ListTriggersRequest,
-        ListTriggersResponse, MergeRequest, MergeResponse, OpenChangeRequest, OpenChangeResponse,
-        PipelineStatusRequest, PipelineStatusResponse, ReadFileRequest, ReadFileResponse,
+        EnsureTriggerResponse, ForgeCommentRequest, ForgeSetCheckRequest,
+        ForgeSetDeploymentRequest, GetCapabilitiesRequest, GetCapabilitiesResponse,
+        GetChangeStateRequest, GetChangeStateResponse, GetDefaultBranchRequest,
+        GetDefaultBranchResponse, ListForgeIssuesRequest, ListForgePullRequestsRequest,
+        ListForgeReposRequest, ListIssuesResponse, ListPullRequestsResponse, ListReposResponse,
+        ListTriggersRequest, ListTriggersResponse, MergeRequest, MergeResponse, OpenChangeRequest,
+        OpenChangeResponse, PipelineStatusRequest, PipelineStatusResponse, ReadFileRequest,
+        ReadFileResponse, WriteAck,
     },
     testing::FakeForge,
     Forge, ForgeKind, RepoRef,
@@ -227,6 +231,116 @@ impl ForgeService for ServeForge {
             trigger: Some(e.trigger),
             created: e.created,
         }))
+    }
+
+    // The optional surfaces folded into ForgeService. Delegated the same way as
+    // everything above, so a passthrough field-mapping bug in any of them shows
+    // up here. `FakeForge` takes the trait's `unsupported` defaults for all but
+    // capabilities, which is itself the case worth serving: it is what lets a
+    // caller learn the rest are absent WITHOUT calling them.
+    async fn get_capabilities(
+        &self,
+        request: Request<GetCapabilitiesRequest>,
+    ) -> Result<Response<GetCapabilitiesResponse>, Status> {
+        let _ = request.into_inner();
+        let capabilities = self.0.capabilities().await.map_err(to_status)?;
+        Ok(Response::new(GetCapabilitiesResponse {
+            capabilities: Some(capabilities),
+        }))
+    }
+
+    async fn set_check(
+        &self,
+        request: Request<ForgeSetCheckRequest>,
+    ) -> Result<Response<WriteAck>, Status> {
+        let r = request.into_inner();
+        let detail = self
+            .0
+            .set_check(
+                &r.repo.unwrap_or_default(),
+                &r.head_sha,
+                &r.name,
+                &r.status,
+                &r.conclusion,
+                &r.details_url,
+            )
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(WriteAck { ok: true, detail }))
+    }
+
+    async fn comment(
+        &self,
+        request: Request<ForgeCommentRequest>,
+    ) -> Result<Response<WriteAck>, Status> {
+        let r = request.into_inner();
+        let detail = self
+            .0
+            .comment(&r.repo.unwrap_or_default(), r.number, &r.body)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(WriteAck { ok: true, detail }))
+    }
+
+    async fn set_deployment(
+        &self,
+        request: Request<ForgeSetDeploymentRequest>,
+    ) -> Result<Response<WriteAck>, Status> {
+        let r = request.into_inner();
+        let detail = self
+            .0
+            .set_deployment(
+                &r.repo.unwrap_or_default(),
+                &r.head_sha,
+                &r.r#ref,
+                &r.environment,
+                &r.state,
+                &r.url,
+                &r.log_url,
+                &r.description,
+            )
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(WriteAck { ok: true, detail }))
+    }
+
+    async fn list_repos(
+        &self,
+        request: Request<ListForgeReposRequest>,
+    ) -> Result<Response<ListReposResponse>, Status> {
+        let r = request.into_inner();
+        let repos = self
+            .0
+            .list_repos(&r.owners, &r.labels)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(ListReposResponse { repos }))
+    }
+
+    async fn list_issues(
+        &self,
+        request: Request<ListForgeIssuesRequest>,
+    ) -> Result<Response<ListIssuesResponse>, Status> {
+        let r = request.into_inner();
+        let issues = self
+            .0
+            .list_issues(&r.owners, &r.labels, &r.for_users)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(ListIssuesResponse { issues }))
+    }
+
+    async fn list_pull_requests(
+        &self,
+        request: Request<ListForgePullRequestsRequest>,
+    ) -> Result<Response<ListPullRequestsResponse>, Status> {
+        let r = request.into_inner();
+        let prs = self
+            .0
+            .list_pull_requests(&r.owners, &r.labels, &r.for_users)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(ListPullRequestsResponse { prs }))
     }
 }
 
