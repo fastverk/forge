@@ -39,6 +39,6 @@ platform(
     ],
     exec_properties = {
         "OSFamily": "linux",
-        "container-image": "docker://ghcr.io/catthehacker/ubuntu:act-22.04",
+        "container-image": "docker://oci.tbzl.dev/rbe-worker:act-22.04-libtinfo5-py3",
     },
 )
