@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+// forge.v1 ForgeDiscovery — read-only discovery across code forges.
+//
+// The forge plugin backend browses repos / issues / pull requests
+// across one or more code forges (GitHub today; GitLab self-hosted
+// instances best-effort). It mirrors the agents plugin's shape: a
+// canonical gRPC contract plus an HTTP/JSON facade the fastverk-web
+// shell forwards to (/api/gw/forge/*).
+//
+// The shell maps panel populate (service, method) to REST paths via
+// its RPC_REST table:
+//   forge.v1.ForgeDiscovery/ListRepos        -> GET repos
+//   forge.v1.ForgeDiscovery/ListIssues       -> GET issues
+//   forge.v1.ForgeDiscovery/ListPullRequests -> GET pulls
+// so the facade serves /repos, /issues, /pulls and the panels read
+// rows_field "repos" / "issues" / "prs".
+
+package forge.v1;
+
+// ============================================================
+// Core types: Repository, Issue, PullRequest
+// ============================================================
+
+// One repository on a code forge (GitHub / GitLab).
+message Repository {
+  // Forge host, e.g. "github.com" or "gitlab.savvifi.com".
+  string host = 1;
+  // Owner / namespace, e.g. "fastverk".
+  string owner = 2;
+  // Short repo name, e.g. "rules_cc_cross".
+  string name = 3;
+  // "owner/name", e.g. "fastverk/rules_cc_cross".
+  string full_name = 4;
+  // Default branch (almost always "main").
+  string default_branch = 5;
+  // "public" / "private" / "internal" ("" = unknown).
+  string visibility = 6;
+  // Open issue + PR counts (snapshot).
+  uint32 open_issues = 7;
+  uint32 open_prs = 8;
+  // Which forge this came from: "github" or "gitlab".
+  string forge = 9;
+}
+
+// One issue (open or closed).
+message Issue {
+  // Repo + number, e.g. "fastverk/rules_cc_cross#42".
+  string ref = 1;
+  string title = 2;
+  // Author's login.
+  string author = 3;
+  // RFC 3339 created_at.
+  string created_at = 4;
+  // RFC 3339 updated_at.
+  string updated_at = 5;
+  // Labels (e.g. "agent/ready", "bug").
+  repeated string labels = 6;
+  // "open" / "closed" ("" = unknown).
+  string state = 7;
+}
+
+// One pull request (or GitLab merge request).
+message PullRequest {
+  // Repo + number, e.g. "fastverk/rules_cc_cross#101".
+  string ref = 1;
+  string title = 2;
+  string author = 3;
+  string created_at = 4;
+  string updated_at = 5;
+  repeated string labels = 6;
+  // "open" / "closed" / "merged" ("" = unknown).
+  string state = 7;
+  // CI status of the head: "green" / "red" / "pending" / "none".
+  string ci_status = 8;
+}
+
+// ============================================================
+// Service: ForgeDiscovery
+// ============================================================
+//
+// All methods are read-only. GitHub is always queried; GitLab hosts
+// are queried best-effort when configured (FASTVERK_GITLAB_HOSTS +
+// per-host tokens) and silently skipped otherwise.
+
+service ForgeDiscovery {
+  // List repositories across the configured forges.
+  rpc ListRepos(ListReposRequest) returns (ListReposResponse);
+  // List open issues across the configured forges.
+  rpc ListIssues(ListIssuesRequest) returns (ListIssuesResponse);
+  // List open pull/merge requests across the configured forges.
+  rpc ListPullRequests(ListPullRequestsRequest) returns (ListPullRequestsResponse);
+}
+
+message ListReposRequest {
+  // Restrict to these forges ("github" / "gitlab"). Empty = all.
+  repeated string forges = 1;
+  // Restrict to these owners / namespaces. Empty = default org.
+  repeated string owners = 2;
+  // Filter to repos with these labels/topics (best-effort).
+  repeated string labels = 3;
+}
+
+message ListReposResponse {
+  repeated Repository repos = 1;
+}
+
+message ListIssuesRequest {
+  repeated string forges = 1;
+  repeated string owners = 2;
+  // Filter to issues with these labels (AND semantics).
+  repeated string labels = 3;
+  // Reserved for caller-scoped filtering.
+  repeated string for_users = 4;
+}
+
+message ListIssuesResponse {
+  repeated Issue issues = 1;
+}
+
+message ListPullRequestsRequest {
+  repeated string forges = 1;
+  repeated string owners = 2;
+  repeated string labels = 3;
+  // Filter to PRs authored by these users.
+  repeated string for_users = 4;
+}
+
+message ListPullRequestsResponse {
+  repeated PullRequest prs = 1;
+}

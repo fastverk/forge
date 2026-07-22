@@ -22,6 +22,10 @@ cargo_build_script(
     data = [
         "//proto/forge/v1:forge.proto",
         "//proto/forge/v1:provision.proto",
+        # events.proto imports discovery.proto, so both must be staged for protoc
+        # even though only events is named in a service definition here.
+        "//proto/forge/v1:discovery.proto",
+        "//proto/forge/v1:events.proto",
     ],
     edition = "2021",
     tools = ["@protobuf//:protoc"],
