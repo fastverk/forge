@@ -17,6 +17,9 @@ pub mod pb {
 }
 
 pub mod gateway;
+// geetch — the platform's own forge. Unlike github/gitlab this adapter maps
+// nothing: geetch SERVES forge.v1 natively, so it is a gRPC passthrough.
+pub mod geetch;
 pub mod github;
 pub mod gitlab;
 pub mod provision;

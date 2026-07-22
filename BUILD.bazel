@@ -98,3 +98,18 @@ rust_test(
         normal_dev = True,
     ),
 )
+
+# B8: the same shared suite, driven through the `geetch` adapter over a REAL
+# socket, against a FakeForge-backed server. Proves the passthrough's wire
+# fidelity here; geetch runs the identical suite through this adapter against a
+# running geetchd (it can build one — this module cannot, that would be circular).
+rust_test(
+    name = "geetch_adapter",
+    srcs = ["tests/geetch_adapter.rs"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [":forge_testing"] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

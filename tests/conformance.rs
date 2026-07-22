@@ -45,10 +45,13 @@ impl Fixture for FakeFixture {
 forge::conformance_suite!(fake_github, FakeFixture::new(ForgeKind::Github));
 forge::conformance_suite!(fake_gitlab, FakeFixture::new(ForgeKind::Gitlab));
 
-
-// TODO(geetch): once geetch serves forge.v1, add a GeetchFixture that points at
-// a test instance and `conformance_suite!(geetch, GeetchFixture::new())`. That
-// single line is geetch's B2 acceptance criterion.
+// geetch: DONE, and it lives in `tests/geetch_adapter.rs` rather than here.
+// geetch serves forge.v1 natively, so the `forge::geetch` adapter runs this same
+// suite over a real socket against a served `FakeForge`; geetch's own repo runs
+// it through that adapter against a running geetchd (this module cannot build one
+// — geetch bazel_deps this module, so the dependency only goes one way). It is a
+// separate file because it needs an async fixture and a server, not because the
+// battery differs — it is byte-for-byte the same eight cases.
 //
 // TODO(github/gitlab): real-adapter fixtures need recorded HTTP fixtures so they
 // run offline in CI. Record once against a scratch org, replay thereafter.

@@ -49,6 +49,11 @@ tonic-build = "0.12"
 [dev-dependencies]
 # The conformance suite drives the async trait directly.
 tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+# The geetch adapter's suite serves a FakeForge over a real socket. Serving from
+# an already-bound listener (rather than bind→drop→`serve(addr)`) removes the
+# window where two of the eight concurrent cases could race onto one reclaimed
+# port. Already in the tree via tonic; this only makes the edge direct.
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints.rust]
 unsafe_code = "forbid"
