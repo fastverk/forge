@@ -1,0 +1,178 @@
+syntax = "proto3";
+
+// forge/v1/events.proto — the forge-agnostic event envelope the fastverk App
+// normalizes GitHub / GitLab / truss webhooks into, then fans out to
+// subscribers (tbzl build/CI, aion deploy, hub issues, the agent, truss
+// mirror). Matches the string-normalized style of forge/v1/discovery.proto
+// (`owner/name#42` refs, RFC 3339 times, string enums) and realizes the §9
+// "integration backbone" sketch in docs/tbzl-fv-split.md.
+//
+// This is the W3 trigger-path contract: the in-cluster webhook receiver
+// (services/webhook_bridge, in-cluster receiver bin) HMAC-verifies a GitHub
+// push / pull_request, builds a `ForgeEvent`, and calls `EventSink.Deliver`
+// on each subscriber. The tbzl subscriber (services/tbzl) implements
+// `EventSink` and, on `EVENT_PUSH` to the default branch, creates a
+// `fastverk.savvifi.com/v1` BuildRun.
+
+package forge.v1;
+
+import "forge/v1/discovery.proto"; // reuse Repository, Issue, PullRequest
+
+// ============================================================
+// Event taxonomy
+// ============================================================
+
+enum EventKind {
+  EVENT_KIND_UNSPECIFIED = 0;
+  EVENT_PUSH = 1;         // commits pushed to a ref
+  EVENT_PULL_REQUEST = 2; // PR/MR opened/synchronized/closed/merged
+  EVENT_ISSUE = 3;        // issue opened/labeled/closed/commented
+  EVENT_TAG = 4;          // tag / release created
+  EVENT_CHECK = 5;        // check / commit-status update
+  EVENT_INSTALL = 6;      // app installed / repos added/removed
+}
+
+// The human/bot that triggered the event.
+message Actor {
+  string login = 1;
+  string email = 2;
+}
+
+// One commit in a push.
+message Commit {
+  string sha = 1;
+  string message = 2;
+  string author = 3;
+}
+
+message PushPayload {
+  string ref = 1;    // "refs/heads/main"
+  string branch = 2; // "main"
+  string before = 3; // sha before the push
+  string after = 4;  // head sha after the push (the build unit)
+  repeated Commit commits = 5;
+  bool created = 6;
+  bool deleted = 7;
+  bool forced = 8;
+}
+
+message PullRequestEvent {
+  PullRequest pr = 1; // forge.v1.PullRequest
+  string action = 2;  // "opened"|"synchronize"|"closed"|"merged"
+  string head_sha = 3;
+  string head_ref = 4;
+  string base_ref = 5;
+}
+
+message IssueEvent {
+  Issue issue = 1;   // forge.v1.Issue
+  string action = 2; // "opened"|"labeled"|"closed"|"commented"
+  string label = 3;  // set when action == "labeled"
+}
+
+message TagPayload {
+  string tag = 1;
+  string sha = 2;
+  bool is_release = 3;
+}
+
+message CheckEvent {
+  string head_sha = 1;
+  string name = 2;
+  string status = 3;     // "queued"|"in_progress"|"completed"
+  string conclusion = 4; // "success"|"failure"|""
+}
+
+message InstallEvent {
+  string action = 1; // "created"|"deleted"|"repositories_added"
+  repeated Repository repos = 2;
+}
+
+// One normalized event. `id` is the idempotency/dedup key; exactly one
+// payload branch is set, matching `kind`.
+message ForgeEvent {
+  string id = 1;       // stable dedup key (forge + delivery)
+  string delivery = 2; // raw X-GitHub-Delivery / equivalent
+  EventKind kind = 3;
+  string forge = 4; // "github" | "gitlab" | "truss"
+  Repository repo = 5;
+  Actor actor = 6;
+  string received_at = 7;   // RFC 3339
+  uint64 installation_id = 8; // App installation (token minting)
+
+  // Aggregated file paths this event touched (for EVENT_PUSH: the union of
+  // added/modified/removed across commits). Drives affected-target reification
+  // downstream (BuildRun.changedFiles). Not in the original §9 sketch — added
+  // for the W3 trigger path so the tbzl subscriber can forward it without
+  // re-walking the payload.
+  repeated string changed_files = 9;
+
+  oneof payload {
+    PushPayload push = 20;
+    PullRequestEvent pull_request = 21;
+    IssueEvent issue = 22;
+    TagPayload tag = 23;
+    CheckEvent check = 24;
+    InstallEvent install = 25;
+  }
+}
+
+// Ack a subscriber returns from EventSink.Deliver.
+message DeliverAck {
+  bool accepted = 1;
+  string subscriber = 2; // "tbzl-ci"|"aion-deploy"|"hub-issues"|"agent"|"truss-mirror"
+  string detail = 3;     // free-form (e.g. the created BuildRun name, or why skipped)
+}
+
+// Fan-out: each platform subscriber implements EventSink; the receiver
+// broadcasts and each filters by kind. Idempotent on ForgeEvent.id.
+service EventSink {
+  rpc Deliver(ForgeEvent) returns (DeliverAck);
+}
+
+// ============================================================
+// Return path — build/CI reports status back to the originating forge
+// (commit checks, PR comments). Forge-agnostic, so truss gets it for free.
+// Declared here as part of the §9 contract; not implemented in W3.
+// ============================================================
+
+message SetCheckRequest {
+  Repository repo = 1;
+  string head_sha = 2;
+  string name = 3;
+  string status = 4;
+  string conclusion = 5;
+  string details_url = 6;
+}
+
+message CommentRequest {
+  string ref = 1; // "owner/name#42"
+  string body = 2;
+}
+
+// A deployment/environment status — the Vercel-style "Environment · Ready ·
+// Visit URL" surface. GitHub → Deployments API (deployment + deployment status);
+// GitLab → Environments + Deployments API. `state` is the forge-agnostic
+// vocabulary (queued|in_progress|success|failure|inactive); the adapter maps it
+// onto each forge's native states.
+message SetDeploymentRequest {
+  Repository repo = 1;
+  string head_sha = 2;    // the commit being deployed
+  string ref = 3;         // "refs/heads/main"
+  string environment = 4; // "production" | service name
+  string state = 5;       // queued|in_progress|success|failure|inactive
+  string url = 6;         // the environment URL (the "Visit" link)
+  string log_url = 7;     // optional details/log link
+  string description = 8; // optional human-readable status line
+}
+
+message WriteAck {
+  bool ok = 1;
+  string detail = 2;
+}
+
+service ForgeWrite {
+  rpc SetCheck(SetCheckRequest) returns (WriteAck);
+  rpc Comment(CommentRequest) returns (WriteAck);
+  rpc SetDeployment(SetDeploymentRequest) returns (WriteAck);
+}

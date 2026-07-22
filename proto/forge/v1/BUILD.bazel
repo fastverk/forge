@@ -5,4 +5,10 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "forge.proto",
     "provision.proto",
+    # events.proto + discovery.proto were vendored, byte-identical, into
+    # plugin-tbzl, plugin-forge and geetch because this module did not offer
+    # them. They are `package forge.v1` and belong here; consumers should
+    # data-dep these labels rather than keep a copy.
+    "discovery.proto",
+    "events.proto",
 ])
