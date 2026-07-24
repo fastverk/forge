@@ -23,6 +23,9 @@ pub mod geetch;
 pub mod github;
 pub mod gitlab;
 pub mod provision;
+// Runtime pinning for out-of-module consumers — see the module docs for the
+// cross-crate_universe reactor panic it exists to prevent.
+pub mod runtime;
 
 // Test doubles for the `Forge` contract. A real module behind a non-default
 // feature, NOT `#[cfg(test)]`: wave / plugin-forge / geetch are each a separate
