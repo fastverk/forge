@@ -1,3 +1,19 @@
+> [!IMPORTANT]
+> **This repository is retired.** `forge` is developed in the
+> [`fastverk/platform`](https://github.com/fastverk/platform) ship vehicle, at
+> [`forge/`](https://github.com/fastverk/platform/tree/main/forge). Open issues and
+> pull requests there.
+>
+> The published module is unchanged — `bazel_dep(name = "forge", version = "0.0.6")`
+> resolves exactly as before. This remote keeps its full history and every tag, so
+> existing registry entries and `git_override` pins stay valid. The `forge.v1`
+> protos are published from
+> [`fastverk/contracts`](https://github.com/fastverk/contracts).
+>
+> Retired at [`98591f7`](https://github.com/fastverk/forge/commit/98591f75f411701cea00bcd0cf54f803cc2a140d),
+> the commit the vehicle imported — nothing here is unimported. Background:
+> [Consolidation](https://docs.fastverk.com/consolidation.html).
+
 # forge
 
 Generic forge contract (`ForgeService`) + GitHub/GitLab adapters.
