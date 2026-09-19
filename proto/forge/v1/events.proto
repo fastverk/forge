@@ -143,6 +143,9 @@ message SetCheckRequest {
   string status = 4;
   string conclusion = 5;
   string details_url = 6;
+  // Optional human-readable diagnostic for the forge's native check output.
+  // This must explain a terminal failure even when no build log/stream exists.
+  string summary = 7;
 }
 
 message CommentRequest {
